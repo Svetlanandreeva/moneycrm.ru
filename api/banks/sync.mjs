@@ -9,6 +9,98 @@ import {
   transactionCounterparty,
 } from '../../server/banks.mjs'
 
+async function syncDemo(connection, user) {
+  const admin = serviceClient()
+  const now = new Date()
+  const { data: links, error: linksError } = await admin
+    .from('bank_account_links')
+    .select('id,account_id,currency')
+    .eq('connection_id', connection.id)
+    .limit(1)
+  if (linksError) throw linksError
+  const link = links?.[0]
+  if (!link) return { imported: 0, pendingStatements: 0 }
+
+  const { data: account, error: accountError } = await admin
+    .from('accounts')
+    .select('id,workspace_id')
+    .eq('id', link.account_id)
+    .single()
+  if (accountError) throw accountError
+  const { data: workspace, error: workspaceError } = await admin
+    .from('workspaces')
+    .select('id,kind')
+    .eq('id', account.workspace_id)
+    .single()
+  if (workspaceError) throw workspaceError
+
+  const hourKey = now.toISOString().slice(0, 13).replace(/[-T:]/g, '')
+  const externalId = `demo-sync-${connection.id}-${hourKey}`
+  const { data: existing, error: existingError } = await admin
+    .from('transactions')
+    .select('id')
+    .eq('account_id', account.id)
+    .eq('external_id', externalId)
+    .eq('source', 'bank')
+    .maybeSingle()
+  if (existingError) throw existingError
+
+  let imported = 0
+  let transactionId = existing?.id || null
+  if (!transactionId) {
+    const { data: tx, error: txError } = await admin
+      .from('transactions')
+      .insert({
+        workspace_id: account.workspace_id,
+        account_id: account.id,
+        amount_minor: -49900,
+        currency: link.currency || 'RUB',
+        transaction_type: 'expense',
+        context: workspace.kind,
+        counterparty: 'Тестовая покупка',
+        note: 'Новая операция из браузерной синхронизации',
+        occurred_at: now.toISOString(),
+        source: 'bank',
+        external_id: externalId,
+        status: 'posted',
+        created_by: user.id,
+      })
+      .select('id')
+      .single()
+    if (txError) throw txError
+    transactionId = tx.id
+    imported = 1
+  }
+
+  const { error: importError } = await admin
+    .from('bank_transaction_imports')
+    .upsert({
+      bank_account_link_id: link.id,
+      external_transaction_id: externalId,
+      amount_minor: -49900,
+      currency: link.currency || 'RUB',
+      direction: 'debit',
+      posted_at: now.toISOString(),
+      description: 'Новая операция из браузерной синхронизации',
+      merchant_name: 'Тестовая покупка',
+      import_status: 'imported',
+      matched_transaction_id: transactionId,
+      raw_data: { demo: true, synced: true },
+      updated_at: now.toISOString(),
+    }, { onConflict: 'bank_account_link_id,external_transaction_id' })
+  if (importError) throw importError
+
+  await admin.from('bank_account_links').update({ last_synced_at: now.toISOString() }).eq('connection_id', connection.id)
+  await admin.from('bank_connections').update({
+    last_sync_started_at: now.toISOString(),
+    last_synced_at: now.toISOString(),
+    status: 'active',
+    error_message: null,
+  }).eq('id', connection.id)
+
+  return { imported, pendingStatements: 0 }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' })
@@ -29,6 +121,12 @@ export default async function handler(req, res) {
       .eq('id', connectionId)
       .single()
     if (connectionError) throw connectionError
+
+    if (connection.provider === 'demo') {
+      const result = await syncDemo(connection, user)
+      res.status(200).json(result)
+      return
+    }
     if (connection.provider !== 'everypay') throw new Error('Unsupported bank provider')
 
     const admin = serviceClient()
@@ -103,7 +201,6 @@ export default async function handler(req, res) {
         : connection.connected_at
           ? new Date(connection.connected_at)
           : new Date(Date.now() - 24 * 60 * 60 * 1000)
-      // A small overlap makes sync resilient to delayed booking; deduplication prevents repeats.
       from.setMinutes(from.getMinutes() - 10)
 
       const statement = await everypayStatement(accessToken, link.external_account_id, from.toISOString(), now.toISOString(), req)
