@@ -1,0 +1,47 @@
+export default async function handler(req, res) {
+  if (req.method !== 'GET') {
+    res.status(405).send('Method not allowed')
+    return
+  }
+
+  const connectionId = String(req.query?.connectionId || '')
+  const token = String(req.query?.token || '')
+  if (!connectionId || !token) {
+    res.status(400).send('Missing demo connection')
+    return
+  }
+
+  const escape = value => String(value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
+  }[char]))
+
+  res.setHeader('content-type', 'text/html; charset=utf-8')
+  res.status(200).send(`<!doctype html>
+<html lang="ru">
+<head>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>Тестовый банк · MoneyCRM</title>
+  <style>
+    *{box-sizing:border-box} body{margin:0;background:#0b0d11;color:#f5f7fa;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;display:grid;place-items:center;padding:20px}
+    .card{width:min(430px,100%);background:#15181f;border:1px solid #2a2e38;border-radius:24px;padding:24px;box-shadow:0 24px 80px #0008}.logo{width:48px;height:48px;border-radius:14px;background:#e9f31d;color:#0b0d11;display:grid;place-items:center;font-weight:900;margin-bottom:18px}.muted{color:#7e8795;font-size:14px;line-height:1.5}.warn{background:#e9f31d12;border:1px solid #e9f31d30;color:#dce86d;padding:12px 14px;border-radius:14px;font-size:13px;line-height:1.45;margin:16px 0}label{display:block;color:#8993a1;font-size:12px;margin:14px 0 6px}input{width:100%;height:48px;border-radius:13px;border:1px solid #303540;background:#0f1217;color:#fff;padding:0 14px;font-size:16px;outline:none}button{width:100%;height:50px;border:0;border-radius:14px;background:#e9f31d;color:#0b0d11;font-weight:900;font-size:15px;margin-top:18px;cursor:pointer}.small{font-size:11px;color:#5d6674;text-align:center;margin-top:14px}
+  </style>
+</head>
+<body>
+  <form class="card" method="post" action="/api/banks/demo-connect" autocomplete="off">
+    <div class="logo">TB</div>
+    <h1 style="font-size:28px;margin:0 0 8px">Тестовый банк</h1>
+    <p class="muted" style="margin:0">Проверяем браузерный сценарий входа, подключения карт и синхронизации с MoneyCRM.</p>
+    <div class="warn"><b>Не вводите реальный банковский логин или пароль.</b><br>Для теста подойдут любые данные — они нигде не сохраняются.</div>
+    <input type="hidden" name="connectionId" value="${escape(connectionId)}" />
+    <input type="hidden" name="token" value="${escape(token)}" />
+    <label>Логин</label>
+    <input name="login" placeholder="например test" required />
+    <label>Пароль</label>
+    <input name="password" type="password" placeholder="любые символы" required />
+    <button type="submit">Войти и подключить</button>
+    <div class="small">Это тестовый коннектор MoneyCRM. Реальные реквизиты не запрашиваются и не сохраняются.</div>
+  </form>
+</body>
+</html>`)
+}
