@@ -1,5 +1,6 @@
-import { Bell, Briefcase, Eye, EyeOff, Layers, User, Users } from 'lucide-react'
+import { Briefcase, Eye, EyeOff, Layers, User, Users } from 'lucide-react'
 import { CTX_TABS } from '../data'
+import { NotificationsBell } from './NotificationsBell'
 
 const CONTEXT_ICONS = {
   'Все': Layers,
@@ -26,9 +27,7 @@ export function AppHeader({ ctx, setCtx, show, toggleShow }: { ctx: string; setC
           <button aria-label={show ? 'Скрыть суммы' : 'Показать суммы'} onClick={toggleShow} style={{ width: 34, height: 34, background: '#14161c', border: '1px solid #232630', borderRadius: 11, cursor: 'pointer', display: 'grid', placeItems: 'center' }}>
             {show ? <Eye size={15} color="#737b88" /> : <EyeOff size={15} color="#737b88" />}
           </button>
-          <button aria-label="Уведомления" style={{ position: 'relative', width: 34, height: 34, borderRadius: 11, background: '#14161c', border: '1px solid #232630', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
-            <Bell size={15} color="#737b88" />
-          </button>
+          <NotificationsBell />
           <div style={{ width: 33, height: 33, borderRadius: '50%', background: '#171a21', border: '1px solid #343946', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <span style={{ fontSize: 12, fontWeight: 800, color: '#e4f030' }}>А</span>
           </div>
