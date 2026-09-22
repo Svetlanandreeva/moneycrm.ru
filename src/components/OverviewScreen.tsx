@@ -4,6 +4,7 @@ import { ContextSummary } from './ContextSummary'
 import { ForecastCard } from './ForecastCard'
 import { HeroBalance } from './HeroBalance'
 import { MonthlyMetrics } from './MonthlyMetrics'
+import { PlannedReceiptsCard } from './PlannedReceiptsCard'
 import { QuickActions } from './QuickActions'
 import { TransactionsList } from './TransactionsList'
 import { getFinanceSnapshot, type FinanceContext, type FinanceSnapshot } from '../lib/moneycrm'
@@ -62,6 +63,7 @@ export function OverviewScreen({ show, onToggleShow, ctx }: { show: boolean; onT
       <HeroBalance show={show} onToggleShow={onToggleShow} ctx={ctx} snapshot={snapshot} />
       <QuickActions />
       <MonthlyMetrics show={show} ctx={ctx} snapshot={snapshot} />
+      <PlannedReceiptsCard ctx={ctx} show={show} />
       <CashflowChart />
       <ForecastCard show={show} />
       <TransactionsList show={show} />
