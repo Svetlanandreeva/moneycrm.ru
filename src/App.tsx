@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { FloatingAdd } from './components/AddSheet'
 import { AppHeader } from './components/AppHeader'
+import { AuthGate } from './components/AuthGate'
 import { BottomNav } from './components/BottomNav'
 import { MoneyScreen } from './components/MoneyScreen'
 import { OverviewScreen } from './components/OverviewScreen'
 import { Placeholder } from './components/Placeholder'
 
-export default function App() {
+function MoneyCRMApp() {
   const [nav, setNav] = useState('overview')
   const [ctx, setCtx] = useState('Все')
   const [show, setShow] = useState(true)
@@ -25,5 +26,13 @@ export default function App() {
       <FloatingAdd open={addOpen} setOpen={setAddOpen} />
       <BottomNav nav={nav} setNav={setNav} />
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <AuthGate>
+      <MoneyCRMApp />
+    </AuthGate>
   )
 }
