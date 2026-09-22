@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 
+// Production fallback keeps the live app connected even when Vercel env vars are absent.
 const supabaseUrl =
   import.meta.env.VITE_SUPABASE_URL?.trim() ||
   'https://drsatwounoiqrenkhcze.supabase.co'
