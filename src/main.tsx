@@ -4,6 +4,7 @@ import App from './App'
 import { AuthGate } from './components/AuthGate'
 import './index.css'
 
+// MoneyCRM production entrypoint: auth-gated app shell.
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <AuthGate>
