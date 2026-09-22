@@ -1,4 +1,5 @@
 import { Briefcase, ChevronRight, Layers, User, Users } from 'lucide-react'
+import { formatMoneyMinor, type FinanceContext, type FinanceSnapshot } from '../lib/moneycrm'
 
 const CONFIG = {
   'Все': {
@@ -7,7 +8,6 @@ const CONFIG = {
     title: 'Все деньги в одной системе',
     description: 'Личные, семейные и бизнес-финансы без смешивания контекстов.',
     accent: '#e4f030',
-    stats: [['Личные', '0 ₽'], ['Семья', '0 ₽'], ['Бизнес', '0 ₽']],
     action: 'Настроить пространства',
   },
   'Личные': {
@@ -16,7 +16,6 @@ const CONFIG = {
     title: 'Ваши деньги',
     description: 'Повседневные расходы, личные накопления, обязательства и финансовая подушка.',
     accent: '#60a5fa',
-    stats: [['На счетах', '0 ₽'], ['В резерве', '0 ₽'], ['В целях', '0 ₽']],
     action: 'Добавить личный счёт',
   },
   'Семья': {
@@ -25,7 +24,6 @@ const CONFIG = {
     title: 'Финансы семьи',
     description: 'Общий бюджет, совместные цели и обязательные платежи — отдельно от личных денег.',
     accent: '#c084fc',
-    stats: [['Общий бюджет', '0 ₽'], ['Общие цели', '0 ₽'], ['Участники', 'Только вы']],
     action: 'Настроить семейный бюджет',
   },
   'Бизнес': {
@@ -34,14 +32,46 @@ const CONFIG = {
     title: 'Деньги бизнеса',
     description: 'Счета, проекты, прибыль, обязательства и деньги к получению в одном контуре.',
     accent: '#f59e0b',
-    stats: [['На счетах', '0 ₽'], ['К получению', '0 ₽'], ['Проекты', '0']],
     action: 'Добавить бизнес-счёт',
   },
 } as const
 
-export function ContextSummary({ ctx }: { ctx: string }) {
-  const config = CONFIG[ctx as keyof typeof CONFIG] || CONFIG['Все']
+function statsForContext(ctx: FinanceContext, snapshot: FinanceSnapshot) {
+  if (ctx === 'Все') {
+    return [
+      ['Личные', formatMoneyMinor(snapshot.balancesByKind.personal)],
+      ['Семья', formatMoneyMinor(snapshot.balancesByKind.family)],
+      ['Бизнес', formatMoneyMinor(snapshot.balancesByKind.business)],
+    ]
+  }
+
+  if (ctx === 'Личные') {
+    return [
+      ['На счетах', formatMoneyMinor(snapshot.totalBalanceMinor)],
+      ['Счетов', String(snapshot.accountCount)],
+      ['В резерве', '0 ₽'],
+    ]
+  }
+
+  if (ctx === 'Семья') {
+    return [
+      ['Общий бюджет', formatMoneyMinor(snapshot.totalBalanceMinor)],
+      ['Счетов', String(snapshot.accountCount)],
+      ['Общие цели', '0 ₽'],
+    ]
+  }
+
+  return [
+    ['На счетах', formatMoneyMinor(snapshot.totalBalanceMinor)],
+    ['Счетов', String(snapshot.accountCount)],
+    ['К получению', '0 ₽'],
+  ]
+}
+
+export function ContextSummary({ ctx, snapshot }: { ctx: FinanceContext; snapshot: FinanceSnapshot }) {
+  const config = CONFIG[ctx] || CONFIG['Все']
   const Icon = config.icon
+  const stats = statsForContext(ctx, snapshot)
 
   return (
     <section style={{ background: '#14161c', border: '1px solid #22252e', borderRadius: 22, padding: 17, overflow: 'hidden', position: 'relative' }}>
@@ -59,10 +89,10 @@ export function ContextSummary({ ctx }: { ctx: string }) {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 7, marginTop: 15 }}>
-        {config.stats.map(([label, value]) => (
+        {stats.map(([label, value]) => (
           <div key={label} style={{ minWidth: 0, padding: '10px 9px', borderRadius: 12, background: '#101218', border: '1px solid #1e222b' }}>
             <p style={{ margin: '0 0 4px', fontSize: 8, color: '#59616f', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</p>
-            <p style={{ margin: 0, fontSize: value === 'Только вы' ? 10 : 13, fontWeight: 800, color: '#e5e7eb', fontFamily: value.includes('₽') || value === '0' ? 'JetBrains Mono, monospace' : 'Inter, sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</p>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: '#e5e7eb', fontFamily: value.includes('₽') ? 'JetBrains Mono, monospace' : 'Inter, sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</p>
           </div>
         ))}
       </div>
