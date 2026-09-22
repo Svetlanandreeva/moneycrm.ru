@@ -6,6 +6,7 @@ import { BottomNav } from './components/BottomNav'
 import { MoneyScreen } from './components/MoneyScreen'
 import { OverviewScreen } from './components/OverviewScreen'
 import { Placeholder } from './components/Placeholder'
+import { ProjectsScreen } from './components/ProjectsScreen'
 import type { FinanceContext } from './lib/moneycrm'
 
 function MoneyCRMApp() {
@@ -20,7 +21,7 @@ function MoneyCRMApp() {
       <main style={{ flex: 1, padding: '16px 16px 100px' }}>
         {nav === 'overview' && <OverviewScreen show={show} onToggleShow={() => setShow(value => !value)} ctx={ctx} />}
         {nav === 'money' && <MoneyScreen show={show} ctx={ctx} />}
-        {nav === 'projects' && <Placeholder label="Проекты" />}
+        {nav === 'projects' && <ProjectsScreen />}
         {nav === 'goals' && <Placeholder label="Цели и накопления" />}
         {nav === 'settings' && <Placeholder label="Настройки" />}
       </main>
