@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { CashCalendarCard } from './CashCalendarCard'
 import { CashflowChart } from './CashflowChart'
 import { ContextSummary } from './ContextSummary'
+import { FamilyAccessCard } from './FamilyAccessCard'
 import { ForecastCard } from './ForecastCard'
 import { HeroBalance } from './HeroBalance'
 import { MonthlyMetrics } from './MonthlyMetrics'
@@ -61,11 +63,13 @@ export function OverviewScreen({ show, onToggleShow, ctx }: { show: boolean; onT
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, opacity: loading ? 0.78 : 1, transition: 'opacity 160ms ease' }}>
       <ContextSummary ctx={ctx} snapshot={snapshot} />
+      {ctx === 'Семья' && <FamilyAccessCard show={show} />}
       <HeroBalance show={show} onToggleShow={onToggleShow} ctx={ctx} snapshot={snapshot} />
       <QuickActions />
       <MonthlyMetrics show={show} ctx={ctx} snapshot={snapshot} />
       <PlannedReceiptsCard ctx={ctx} show={show} />
       <RecurringPaymentsCard ctx={ctx} show={show} />
+      <CashCalendarCard ctx={ctx} show={show} startingBalanceMinor={snapshot.freeBalanceMinor} />
       <CashflowChart />
       <ForecastCard show={show} />
       <TransactionsList show={show} />
