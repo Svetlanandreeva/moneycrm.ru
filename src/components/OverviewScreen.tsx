@@ -72,7 +72,7 @@ export function OverviewScreen({ show, onToggleShow, ctx }: { show: boolean; onT
       <CashCalendarCard ctx={ctx} show={show} startingBalanceMinor={snapshot.freeBalanceMinor} />
       <CashflowChart />
       <ForecastCard show={show} />
-      <TransactionsList show={show} />
+      <TransactionsList show={show} ctx={ctx} />
     </div>
   )
 }
