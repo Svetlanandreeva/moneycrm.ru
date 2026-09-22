@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { FloatingAdd } from './components/AddSheet'
 import { AppHeader } from './components/AppHeader'
 import { AuthGate } from './components/AuthGate'
+import { BankConnectionsCard } from './components/BankConnectionsCard'
 import { BottomNav } from './components/BottomNav'
 import { MoneyScreen } from './components/MoneyScreen'
 import { OverviewScreen } from './components/OverviewScreen'
@@ -10,17 +11,23 @@ import { ProjectsHub } from './components/ProjectsHub'
 import type { FinanceContext } from './lib/moneycrm'
 
 function MoneyCRMApp() {
-  const [nav, setNav] = useState('overview')
+  const [nav, setNav] = useState(() => new URLSearchParams(window.location.search).has('bank') ? 'money' : 'overview')
   const [ctx, setCtx] = useState<FinanceContext>('Все')
   const [show, setShow] = useState(true)
   const [addOpen, setAddOpen] = useState(false)
+  const [moneyRefresh, setMoneyRefresh] = useState(0)
 
   return (
     <div style={{ minHeight: '100vh', maxWidth: 480, margin: '0 auto', background: '#0c0d10', color: '#f0f0f0', fontFamily: 'Inter, sans-serif', position: 'relative', display: 'flex', flexDirection: 'column' }}>
       <AppHeader ctx={ctx} setCtx={value => setCtx(value as FinanceContext)} show={show} toggleShow={() => setShow(value => !value)} />
       <main style={{ flex: 1, padding: '16px 16px 100px' }}>
         {nav === 'overview' && <OverviewScreen show={show} onToggleShow={() => setShow(value => !value)} ctx={ctx} />}
-        {nav === 'money' && <MoneyScreen show={show} ctx={ctx} />}
+        {nav === 'money' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <BankConnectionsCard ctx={ctx} onChanged={() => setMoneyRefresh(value => value + 1)} />
+            <MoneyScreen key={`${ctx}-${moneyRefresh}`} show={show} ctx={ctx} />
+          </div>
+        )}
         {nav === 'projects' && <ProjectsHub />}
         {nav === 'goals' && <Placeholder label="Цели и накопления" />}
         {nav === 'settings' && <Placeholder label="Настройки" />}
