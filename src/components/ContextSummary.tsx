@@ -30,9 +30,9 @@ const CONFIG = {
     icon: Briefcase,
     eyebrow: 'БИЗНЕС',
     title: 'Деньги бизнеса',
-    description: 'Счета, проекты, прибыль, обязательства и деньги к получению в одном контуре.',
+    description: 'Счета, проекты, прибыль, деньги клиентов до приёмки и суммы к получению.',
     accent: '#f59e0b',
-    action: 'Добавить бизнес-счёт',
+    action: 'Открыть проекты',
   },
 } as const
 
@@ -62,9 +62,9 @@ function statsForContext(ctx: FinanceContext, snapshot: FinanceSnapshot) {
   }
 
   return [
-    ['На счетах', formatMoneyMinor(snapshot.totalBalanceMinor)],
-    ['Счетов', String(snapshot.accountCount)],
-    ['К получению', '0 ₽'],
+    ['Свободно', formatMoneyMinor(snapshot.freeBalanceMinor)],
+    ['До приёмки', formatMoneyMinor(snapshot.restrictedProjectMinor)],
+    ['К получению', formatMoneyMinor(snapshot.outstandingProjectMinor)],
   ]
 }
 
