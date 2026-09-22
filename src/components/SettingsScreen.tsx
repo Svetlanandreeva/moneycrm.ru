@@ -1,5 +1,6 @@
 import { Settings2 } from 'lucide-react'
 import { BankConnectionsCard } from './BankConnectionsCard'
+import { PwaInstallCard } from './PwaInstallCard'
 import type { FinanceContext } from '../lib/moneycrm'
 
 function subtitle(ctx: FinanceContext) {
@@ -24,6 +25,7 @@ export function SettingsScreen({ ctx }: { ctx: FinanceContext }) {
         </div>
       </section>
 
+      <PwaInstallCard />
       <BankConnectionsCard ctx={ctx} />
     </div>
   )
