@@ -6,9 +6,15 @@ export function TransactionsList({ show }: { show: boolean }) {
     <div style={{ background: '#14161c', border: '1px solid #1e2028', borderRadius: 20, padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <p style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 16, fontWeight: 800 }}>🧾 Операции</p>
-        <button style={{ background: 'none', border: 'none', color: '#e4f030', cursor: 'pointer', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 2 }}>Все <ChevronRight size={13} /></button>
+        {TXS.length > 0 && <button style={{ background: 'none', border: 'none', color: '#e4f030', cursor: 'pointer', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 2 }}>Все <ChevronRight size={13} /></button>}
       </div>
-      {TXS.map((tx, i) => (
+
+      {TXS.length === 0 ? (
+        <div style={{ padding: '28px 14px', textAlign: 'center', border: '1px dashed #2a2d3a', borderRadius: 16 }}>
+          <p style={{ margin: '0 0 6px', fontWeight: 750 }}>Операций пока нет</p>
+          <p style={{ margin: 0, color: '#555c68', fontSize: 11 }}>Добавьте первый доход, расход или перевод.</p>
+        </div>
+      ) : TXS.map((tx, i) => (
         <div key={`${tx.name}-${tx.date}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: i < TXS.length - 1 ? '1px solid #1e2028' : 'none' }}>
           <div style={{ width: 42, height: 42, borderRadius: 13, background: tx.pos ? '#e4f03018' : '#f8717118', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: `1.5px solid ${tx.pos ? '#e4f03030' : '#f8717130'}` }}>
             {tx.pos ? <ArrowUpRight size={18} color="#e4f030" /> : <ArrowDownRight size={18} color="#f87171" />}
