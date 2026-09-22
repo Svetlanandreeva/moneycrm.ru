@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { listWorkspaces, type Workspace } from './moneycrm'
+import { listWorkspaces, type Workspace, type WorkspaceKind } from './moneycrm'
 
 export type BankProvider = {
   type: string
@@ -29,6 +29,21 @@ export type BankConnection = {
   linked_accounts: number
 }
 
+export type BankLinkedAccount = {
+  id: string
+  connection_id: string
+  account_id: string
+  external_name: string | null
+  account_mask: string | null
+  currency: string
+  last_synced_at: string | null
+  account_name: string
+  workspace_id: string
+  workspace_kind: WorkspaceKind
+  institution: string | null
+  account_type: string
+}
+
 function client() {
   if (!supabase) throw new Error('Supabase is not configured')
   return supabase
@@ -49,9 +64,13 @@ export async function getBankProviderState(): Promise<BankProviderState> {
   return payload as BankProviderState
 }
 
-export async function listBankConnections(): Promise<{ workspaces: Workspace[]; connections: BankConnection[] }> {
+export async function listBankConnections(): Promise<{
+  workspaces: Workspace[]
+  connections: BankConnection[]
+  linkedAccounts: BankLinkedAccount[]
+}> {
   const workspaces = await listWorkspaces()
-  if (!workspaces.length) return { workspaces, connections: [] }
+  if (!workspaces.length) return { workspaces, connections: [], linkedAccounts: [] }
 
   const workspaceIds = workspaces.map(workspace => workspace.id)
   const { data: connections, error } = await client()
@@ -63,16 +82,64 @@ export async function listBankConnections(): Promise<{ workspaces: Workspace[]; 
   if (error) throw error
 
   const connectionIds = (connections ?? []).map(connection => connection.id)
-  let links: { connection_id: string }[] = []
+  let links: Array<{
+    id: string
+    connection_id: string
+    account_id: string
+    external_name: string | null
+    account_mask: string | null
+    currency: string
+    last_synced_at: string | null
+  }> = []
+
   if (connectionIds.length) {
     const { data, error: linksError } = await client()
       .from('bank_account_links')
-      .select('connection_id')
+      .select('id,connection_id,account_id,external_name,account_mask,currency,last_synced_at')
       .in('connection_id', connectionIds)
     if (linksError) throw linksError
     links = data ?? []
   }
-  const counts = links.reduce((map, link) => map.set(link.connection_id, (map.get(link.connection_id) ?? 0) + 1), new Map<string, number>())
+
+  const accountIds = links.map(link => link.account_id)
+  let accountRows: Array<{
+    id: string
+    workspace_id: string
+    name: string
+    institution: string | null
+    account_type: string
+  }> = []
+
+  if (accountIds.length) {
+    const { data, error: accountsError } = await client()
+      .from('accounts')
+      .select('id,workspace_id,name,institution,account_type')
+      .in('id', accountIds)
+    if (accountsError) throw accountsError
+    accountRows = data ?? []
+  }
+
+  const accountMap = new Map(accountRows.map(account => [account.id, account]))
+  const workspaceKindMap = new Map(workspaces.map(workspace => [workspace.id, workspace.kind]))
+  const counts = links.reduce(
+    (map, link) => map.set(link.connection_id, (map.get(link.connection_id) ?? 0) + 1),
+    new Map<string, number>(),
+  )
+
+  const linkedAccounts = links.flatMap(link => {
+    const account = accountMap.get(link.account_id)
+    if (!account) return []
+    const kind = workspaceKindMap.get(account.workspace_id)
+    if (!kind) return []
+    return [{
+      ...link,
+      account_name: account.name,
+      workspace_id: account.workspace_id,
+      workspace_kind: kind,
+      institution: account.institution,
+      account_type: account.account_type,
+    } satisfies BankLinkedAccount]
+  })
 
   return {
     workspaces,
@@ -80,6 +147,7 @@ export async function listBankConnections(): Promise<{ workspaces: Workspace[]; 
       ...connection,
       linked_accounts: counts.get(connection.id) ?? 0,
     })) as BankConnection[],
+    linkedAccounts,
   }
 }
 
@@ -112,6 +180,14 @@ export async function syncBankConnection(connectionId: string) {
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(payload.error || 'Не удалось синхронизировать банк')
   return payload as { imported: number; pendingStatements: number }
+}
+
+export async function routeBankAccount(linkId: string, targetWorkspaceId: string) {
+  const { error } = await client().rpc('route_bank_account_context', {
+    p_bank_account_link_id: linkId,
+    p_target_workspace_id: targetWorkspaceId,
+  })
+  if (error) throw error
 }
 
 export async function disconnectBankConnection(connectionId: string) {
