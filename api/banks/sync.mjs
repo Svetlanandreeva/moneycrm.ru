@@ -31,13 +31,6 @@ export default async function handler(req, res) {
     if (connectionError) throw connectionError
     if (connection.provider !== 'everypay') throw new Error('Unsupported bank provider')
 
-    const { data: workspace, error: workspaceError } = await client
-      .from('workspaces')
-      .select('id,kind')
-      .eq('id', connection.workspace_id)
-      .single()
-    if (workspaceError) throw workspaceError
-
     const admin = serviceClient()
     const { data: stored, error: storedError } = await admin
       .from('bank_connection_tokens')
@@ -81,11 +74,30 @@ export default async function handler(req, res) {
       .eq('connection_id', connectionId)
     if (linksError) throw linksError
 
+    const accountIds = (links || []).map(link => link.account_id)
+    const { data: accountRows, error: accountRowsError } = accountIds.length
+      ? await admin.from('accounts').select('id,workspace_id').in('id', accountIds)
+      : { data: [], error: null }
+    if (accountRowsError) throw accountRowsError
+
+    const workspaceIds = [...new Set((accountRows || []).map(account => account.workspace_id))]
+    const { data: workspaceRows, error: workspaceRowsError } = workspaceIds.length
+      ? await admin.from('workspaces').select('id,kind').in('id', workspaceIds)
+      : { data: [], error: null }
+    if (workspaceRowsError) throw workspaceRowsError
+
+    const accountWorkspace = new Map((accountRows || []).map(account => [account.id, account.workspace_id]))
+    const workspaceKind = new Map((workspaceRows || []).map(workspace => [workspace.id, workspace.kind]))
+
     let imported = 0
     let pendingStatements = 0
     const now = new Date()
 
     for (const link of links || []) {
+      const currentWorkspaceId = accountWorkspace.get(link.account_id)
+      const currentContext = currentWorkspaceId ? workspaceKind.get(currentWorkspaceId) : null
+      if (!currentWorkspaceId || !currentContext) continue
+
       const from = link.last_synced_at
         ? new Date(link.last_synced_at)
         : connection.connected_at
@@ -147,12 +159,12 @@ export default async function handler(req, res) {
             const { data: createdTx, error: txError } = await admin
               .from('transactions')
               .insert({
-                workspace_id: connection.workspace_id,
+                workspace_id: currentWorkspaceId,
                 account_id: link.account_id,
                 amount_minor: signedMinor,
                 currency,
                 transaction_type: isCredit ? 'income' : 'expense',
-                context: workspace.kind,
+                context: currentContext,
                 counterparty,
                 note: tx.description || null,
                 occurred_at: occurredAt,
