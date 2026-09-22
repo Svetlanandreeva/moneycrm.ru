@@ -1,0 +1,22 @@
+import { ArrowDownRight, ArrowUpRight, ChevronRight } from 'lucide-react'
+import { TXS } from '../data'
+
+export function TransactionsList({ show }: { show: boolean }) {
+  return (
+    <div style={{ background: '#14161c', border: '1px solid #1e2028', borderRadius: 20, padding: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <p style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 16, fontWeight: 800 }}>🧾 Операции</p>
+        <button style={{ background: 'none', border: 'none', color: '#e4f030', cursor: 'pointer', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 2 }}>Все <ChevronRight size={13} /></button>
+      </div>
+      {TXS.map((tx, i) => (
+        <div key={`${tx.name}-${tx.date}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: i < TXS.length - 1 ? '1px solid #1e2028' : 'none' }}>
+          <div style={{ width: 42, height: 42, borderRadius: 13, background: tx.pos ? '#e4f03018' : '#f8717118', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: `1.5px solid ${tx.pos ? '#e4f03030' : '#f8717130'}` }}>
+            {tx.pos ? <ArrowUpRight size={18} color="#e4f030" /> : <ArrowDownRight size={18} color="#f87171" />}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}><p style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tx.name}</p><p style={{ fontSize: 11, color: '#4b5563' }}>{tx.cat} · {tx.date}</p></div>
+          <div style={{ textAlign: 'right', flexShrink: 0 }}><p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 14, fontWeight: 700, color: tx.pos ? '#e4f030' : '#f87171' }}>{show ? `${tx.amt} ₽` : '•••'}</p><span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 6, background: tx.pos ? '#e4f03015' : '#f8717115', color: tx.pos ? '#e4f030' : '#f87171' }}>{tx.pos ? 'Доход' : 'Расход'}</span></div>
+        </div>
+      ))}
+    </div>
+  )
+}
