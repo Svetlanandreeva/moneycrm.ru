@@ -1,0 +1,21 @@
+{
+  "name": "MoneyCRM",
+  "short_name": "MoneyCRM",
+  "description": "Финансовая система для личных, семейных и бизнес-денег.",
+  "lang": "ru",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0c0d10",
+  "theme_color": "#0c0d10",
+  "categories": ["finance", "business", "productivity"],
+  "icons": [
+    {
+      "src": "/moneycrm-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
