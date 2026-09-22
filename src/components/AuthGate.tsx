@@ -25,14 +25,13 @@ function AuthScreen() {
           password,
           options: {
             data: { display_name: name.trim() || undefined },
-            emailRedirectTo: window.location.origin,
           },
         })
 
     if (result.error) {
       setMessage(result.error.message)
     } else if (mode === 'signup' && !result.data.session) {
-      setMessage('Проверьте почту и подтвердите регистрацию.')
+      setMessage('Регистрация создана, но вход пока недоступен. Проверьте настройку Confirm email в Supabase.')
     }
 
     setLoading(false)
@@ -51,14 +50,14 @@ function AuthScreen() {
 
         <div className="auth-heading">
           <h1>{mode === 'login' ? 'С возвращением' : 'Создать аккаунт'}</h1>
-          <p>{mode === 'login' ? 'Войдите в своё финансовое пространство.' : 'Начнём с личного финансового пространства.'}</p>
+          <p>{mode === 'login' ? 'Войдите в своё финансовое пространство.' : 'Имя, email и пароль — и можно начинать.'}</p>
         </div>
 
         <form onSubmit={submit} className="auth-form">
           {mode === 'signup' && (
             <label className="auth-field">
               <span>Имя</span>
-              <div><UserRound size={17} /><input value={name} onChange={e => setName(e.target.value)} autoComplete="name" placeholder="Ваше имя" /></div>
+              <div><UserRound size={17} /><input value={name} onChange={e => setName(e.target.value)} autoComplete="name" placeholder="Ваше имя" required /></div>
             </label>
           )}
 
