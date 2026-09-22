@@ -1,34 +1,44 @@
 import { CircleAlert, CreditCard, Eye, EyeOff, FolderKanban, PiggyBank, ShieldCheck, WalletCards } from 'lucide-react'
+import { formatMoneyMinor, type FinanceContext, type FinanceSnapshot } from '../lib/moneycrm'
 
 const CONFIG = {
   'Все': {
     capital: 'Общий капитал',
     free: 'Свободно прямо сейчас',
-    secondary: [['Резервы', ShieldCheck], ['Проекты', FolderKanban], ['Накопления', PiggyBank]],
+    secondary: [['Личные', WalletCards], ['Семья', ShieldCheck], ['Бизнес', FolderKanban]],
     deductions: [['Обязательства', CircleAlert], ['Долги / кредиты', CreditCard]],
   },
   'Личные': {
     capital: 'Личный капитал',
     free: 'Можно потратить лично',
-    secondary: [['Резерв', ShieldCheck], ['Личные цели', FolderKanban], ['Накопления', PiggyBank]],
+    secondary: [['На счетах', WalletCards], ['Резерв', ShieldCheck], ['Личные цели', PiggyBank]],
     deductions: [['Обязательства', CircleAlert], ['Кредиты', CreditCard]],
   },
   'Семья': {
     capital: 'Семейный капитал',
     free: 'Свободно для семьи',
-    secondary: [['Общий бюджет', WalletCards], ['Общие цели', FolderKanban], ['Резерв', ShieldCheck]],
+    secondary: [['Общий бюджет', WalletCards], ['Общие цели', PiggyBank], ['Резерв', ShieldCheck]],
     deductions: [['Общие платежи', CircleAlert], ['Семейные долги', CreditCard]],
   },
   'Бизнес': {
     capital: 'Капитал бизнеса',
     free: 'Свободно в бизнесе',
-    secondary: [['В проектах', FolderKanban], ['Резерв', ShieldCheck], ['Налоги', PiggyBank]],
+    secondary: [['На счетах', WalletCards], ['В проектах', FolderKanban], ['Налоги', PiggyBank]],
     deductions: [['К оплате', CircleAlert], ['Налоги', CreditCard]],
   },
 } as const
 
-export function HeroBalance({ show, onToggleShow, ctx = 'Все' }: { show: boolean; onToggleShow: () => void; ctx?: string }) {
-  const config = CONFIG[ctx as keyof typeof CONFIG] || CONFIG['Все']
+function secondaryValues(ctx: FinanceContext, snapshot: FinanceSnapshot) {
+  if (ctx === 'Все') {
+    return [snapshot.balancesByKind.personal, snapshot.balancesByKind.family, snapshot.balancesByKind.business]
+  }
+  return [snapshot.totalBalanceMinor, 0, 0]
+}
+
+export function HeroBalance({ show, onToggleShow, ctx = 'Все', snapshot }: { show: boolean; onToggleShow: () => void; ctx?: FinanceContext; snapshot: FinanceSnapshot }) {
+  const config = CONFIG[ctx] || CONFIG['Все']
+  const secondary = secondaryValues(ctx, snapshot)
+  const freeMinor = snapshot.totalBalanceMinor
 
   return (
     <>
@@ -45,14 +55,14 @@ export function HeroBalance({ show, onToggleShow, ctx = 'Все' }: { show: bool
           </button>
         </div>
 
-        <p style={{ position: 'relative', fontFamily: 'DM Sans, sans-serif', fontSize: 42, fontWeight: 900, color: '#0c0d10', lineHeight: 1, margin: '0 0 20px', letterSpacing: '-0.035em' }}>{show ? '0 ₽' : '•••• ₽'}</p>
+        <p style={{ position: 'relative', fontFamily: 'DM Sans, sans-serif', fontSize: 42, fontWeight: 900, color: '#0c0d10', lineHeight: 1, margin: '0 0 20px', letterSpacing: '-0.035em' }}>{show ? formatMoneyMinor(snapshot.totalBalanceMinor) : '•••• ₽'}</p>
 
         <div style={{ display: 'flex', background: 'rgba(0,0,0,0.075)', borderRadius: 14, overflow: 'hidden', position: 'relative' }}>
-          {config.secondary.map(([label, Icon], i, arr) => (
-            <div key={label} style={{ flex: 1, padding: '10px 6px', textAlign: 'center', borderRight: i < arr.length - 1 ? '1px solid rgba(0,0,0,0.09)' : 'none' }}>
+          {config.secondary.map(([label, Icon], index, items) => (
+            <div key={label} style={{ flex: 1, padding: '10px 6px', textAlign: 'center', borderRight: index < items.length - 1 ? '1px solid rgba(0,0,0,0.09)' : 'none' }}>
               <Icon size={13} color="rgba(0,0,0,0.38)" style={{ marginBottom: 3 }} />
               <p style={{ margin: '0 0 2px', fontSize: 8, color: 'rgba(0,0,0,0.42)', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</p>
-              <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: '#0c0d10', fontFamily: 'JetBrains Mono, monospace' }}>{show ? '0 ₽' : '•••'}</p>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: '#0c0d10', fontFamily: 'JetBrains Mono, monospace' }}>{show ? formatMoneyMinor(secondary[index] ?? 0) : '•••'}</p>
             </div>
           ))}
         </div>
@@ -63,7 +73,7 @@ export function HeroBalance({ show, onToggleShow, ctx = 'Все' }: { show: bool
           <ShieldCheck size={14} color="#6b9a55" />
           <p style={{ margin: 0, fontSize: 10, fontWeight: 800, color: '#5d8a50', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{config.free}</p>
         </div>
-        <p style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 35, fontWeight: 900, color: '#e4f030', lineHeight: 1, margin: '0 0 5px', letterSpacing: '-0.025em' }}>{show ? '0 ₽' : '•••• ₽'}</p>
+        <p style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 35, fontWeight: 900, color: '#e4f030', lineHeight: 1, margin: '0 0 5px', letterSpacing: '-0.025em' }}>{show ? formatMoneyMinor(freeMinor) : '•••• ₽'}</p>
         <p style={{ fontSize: 10, color: '#4b5563', margin: '0 0 12px' }}>Счета − резервы − обязательства</p>
 
         <div style={{ display: 'flex', gap: 9 }}>
