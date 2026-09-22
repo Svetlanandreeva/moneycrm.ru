@@ -3,28 +3,28 @@ import { formatMoneyMinor, type FinanceContext, type FinanceSnapshot } from '../
 
 const CONFIG = {
   'Все': {
-    capital: 'Общий капитал',
-    free: 'Свободно прямо сейчас',
+    capital: 'Всего на счетах',
+    free: 'Реально свободно',
     secondary: [['Личные', WalletCards], ['Семья', ShieldCheck], ['Бизнес', FolderKanban]],
-    deductions: [['Обязательства', CircleAlert], ['Долги / кредиты', CreditCard]],
+    deductions: [['Деньги клиентов', CircleAlert], ['Обязательства', CreditCard]],
   },
   'Личные': {
-    capital: 'Личный капитал',
+    capital: 'Личные деньги на счетах',
     free: 'Можно потратить лично',
     secondary: [['На счетах', WalletCards], ['Резерв', ShieldCheck], ['Личные цели', PiggyBank]],
     deductions: [['Обязательства', CircleAlert], ['Кредиты', CreditCard]],
   },
   'Семья': {
-    capital: 'Семейный капитал',
+    capital: 'Деньги семьи на счетах',
     free: 'Свободно для семьи',
     secondary: [['Общий бюджет', WalletCards], ['Общие цели', PiggyBank], ['Резерв', ShieldCheck]],
     deductions: [['Общие платежи', CircleAlert], ['Семейные долги', CreditCard]],
   },
   'Бизнес': {
-    capital: 'Капитал бизнеса',
-    free: 'Свободно в бизнесе',
-    secondary: [['На счетах', WalletCards], ['В проектах', FolderKanban], ['Налоги', PiggyBank]],
-    deductions: [['К оплате', CircleAlert], ['Налоги', CreditCard]],
+    capital: 'На счетах бизнеса',
+    free: 'Свободно после денег клиентов',
+    secondary: [['На счетах', WalletCards], ['Деньги клиентов', ShieldCheck], ['К получению', FolderKanban]],
+    deductions: [['До приёмки', CircleAlert], ['Обязательства', CreditCard]],
   },
 } as const
 
@@ -32,13 +32,21 @@ function secondaryValues(ctx: FinanceContext, snapshot: FinanceSnapshot) {
   if (ctx === 'Все') {
     return [snapshot.balancesByKind.personal, snapshot.balancesByKind.family, snapshot.balancesByKind.business]
   }
+  if (ctx === 'Бизнес') {
+    return [snapshot.totalBalanceMinor, snapshot.restrictedProjectMinor, snapshot.outstandingProjectMinor]
+  }
   return [snapshot.totalBalanceMinor, 0, 0]
+}
+
+function deductionValues(ctx: FinanceContext, snapshot: FinanceSnapshot) {
+  if (ctx === 'Все' || ctx === 'Бизнес') return [snapshot.restrictedProjectMinor, 0]
+  return [0, 0]
 }
 
 export function HeroBalance({ show, onToggleShow, ctx = 'Все', snapshot }: { show: boolean; onToggleShow: () => void; ctx?: FinanceContext; snapshot: FinanceSnapshot }) {
   const config = CONFIG[ctx] || CONFIG['Все']
   const secondary = secondaryValues(ctx, snapshot)
-  const freeMinor = snapshot.totalBalanceMinor
+  const deductions = deductionValues(ctx, snapshot)
 
   return (
     <>
@@ -59,10 +67,10 @@ export function HeroBalance({ show, onToggleShow, ctx = 'Все', snapshot }: { 
 
         <div style={{ display: 'flex', background: 'rgba(0,0,0,0.075)', borderRadius: 14, overflow: 'hidden', position: 'relative' }}>
           {config.secondary.map(([label, Icon], index, items) => (
-            <div key={label} style={{ flex: 1, padding: '10px 6px', textAlign: 'center', borderRight: index < items.length - 1 ? '1px solid rgba(0,0,0,0.09)' : 'none' }}>
+            <div key={label} style={{ flex: 1, padding: '10px 6px', textAlign: 'center', borderRight: index < items.length - 1 ? '1px solid rgba(0,0,0,0.09)' : 'none', minWidth: 0 }}>
               <Icon size={13} color="rgba(0,0,0,0.38)" style={{ marginBottom: 3 }} />
               <p style={{ margin: '0 0 2px', fontSize: 8, color: 'rgba(0,0,0,0.42)', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</p>
-              <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: '#0c0d10', fontFamily: 'JetBrains Mono, monospace' }}>{show ? formatMoneyMinor(secondary[index] ?? 0) : '•••'}</p>
+              <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: '#0c0d10', fontFamily: 'JetBrains Mono, monospace', whiteSpace: 'nowrap' }}>{show ? formatMoneyMinor(secondary[index] ?? 0) : '•••'}</p>
             </div>
           ))}
         </div>
@@ -73,17 +81,17 @@ export function HeroBalance({ show, onToggleShow, ctx = 'Все', snapshot }: { 
           <ShieldCheck size={14} color="#6b9a55" />
           <p style={{ margin: 0, fontSize: 10, fontWeight: 800, color: '#5d8a50', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{config.free}</p>
         </div>
-        <p style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 35, fontWeight: 900, color: '#e4f030', lineHeight: 1, margin: '0 0 5px', letterSpacing: '-0.025em' }}>{show ? formatMoneyMinor(freeMinor) : '•••• ₽'}</p>
-        <p style={{ fontSize: 10, color: '#4b5563', margin: '0 0 12px' }}>Счета − резервы − обязательства</p>
+        <p style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 35, fontWeight: 900, color: '#e4f030', lineHeight: 1, margin: '0 0 5px', letterSpacing: '-0.025em' }}>{show ? formatMoneyMinor(snapshot.freeBalanceMinor) : '•••• ₽'}</p>
+        <p style={{ fontSize: 10, color: '#4b5563', margin: '0 0 12px' }}>Счета − деньги клиентов до приёмки − резервы − обязательства</p>
 
         <div style={{ display: 'flex', gap: 9 }}>
-          {config.deductions.map(([label, Icon]) => (
+          {config.deductions.map(([label, Icon], index) => (
             <div key={label} style={{ flex: 1, background: '#f871710d', border: '1px solid #f8717118', borderRadius: 11, padding: '9px 10px', minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
                 <Icon size={12} color="#8b5b5b" />
                 <p style={{ margin: 0, fontSize: 9, color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</p>
               </div>
-              <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#f87171', fontFamily: 'JetBrains Mono, monospace' }}>{show ? '0 ₽' : '•••'}</p>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#f87171', fontFamily: 'JetBrains Mono, monospace' }}>{show ? formatMoneyMinor(deductions[index] ?? 0) : '•••'}</p>
             </div>
           ))}
         </div>
