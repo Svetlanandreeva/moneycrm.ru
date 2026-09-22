@@ -24,7 +24,7 @@ function MoneyCRMApp() {
         {nav === 'overview' && <OverviewScreen show={show} onToggleShow={() => setShow(value => !value)} ctx={ctx} />}
         {nav === 'money' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <BankConnectionsCard ctx={ctx} onChanged={() => setMoneyRefresh(value => value + 1)} />
+            <BankConnectionsCard key={ctx} ctx={ctx} onChanged={() => setMoneyRefresh(value => value + 1)} />
             <MoneyScreen key={`${ctx}-${moneyRefresh}`} show={show} ctx={ctx} />
           </div>
         )}
