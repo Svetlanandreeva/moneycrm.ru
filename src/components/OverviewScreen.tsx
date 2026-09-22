@@ -6,6 +6,7 @@ import { HeroBalance } from './HeroBalance'
 import { MonthlyMetrics } from './MonthlyMetrics'
 import { PlannedReceiptsCard } from './PlannedReceiptsCard'
 import { QuickActions } from './QuickActions'
+import { RecurringPaymentsCard } from './RecurringPaymentsCard'
 import { TransactionsList } from './TransactionsList'
 import { getFinanceSnapshot, type FinanceContext, type FinanceSnapshot } from '../lib/moneycrm'
 import { isSupabaseConfigured } from '../lib/supabase'
@@ -64,6 +65,7 @@ export function OverviewScreen({ show, onToggleShow, ctx }: { show: boolean; onT
       <QuickActions />
       <MonthlyMetrics show={show} ctx={ctx} snapshot={snapshot} />
       <PlannedReceiptsCard ctx={ctx} show={show} />
+      <RecurringPaymentsCard ctx={ctx} show={show} />
       <CashflowChart />
       <ForecastCard show={show} />
       <TransactionsList show={show} />
