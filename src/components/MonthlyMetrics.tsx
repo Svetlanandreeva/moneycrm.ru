@@ -1,34 +1,40 @@
 import { ArrowDownRight, ArrowUpRight, Briefcase, PiggyBank, TrendingUp, Users, WalletCards } from 'lucide-react'
+import { formatMoneyMinor, type FinanceContext, type FinanceSnapshot } from '../lib/moneycrm'
 
-const CONFIG = {
-  'Все': [
-    { icon: ArrowDownRight, label: 'Доходы', value: '0 ₽', color: '#e4f030' },
-    { icon: ArrowUpRight, label: 'Расходы', value: '0 ₽', color: '#f87171' },
-    { icon: TrendingUp, label: 'Чистый поток', value: '0 ₽', color: '#34d399' },
-    { icon: Briefcase, label: 'Прибыль', value: '0 ₽', color: '#c084fc' },
-  ],
-  'Личные': [
-    { icon: ArrowDownRight, label: 'Личные доходы', value: '0 ₽', color: '#60a5fa' },
-    { icon: ArrowUpRight, label: 'Личные расходы', value: '0 ₽', color: '#f87171' },
-    { icon: PiggyBank, label: 'Накоплено', value: '0 ₽', color: '#34d399' },
-    { icon: WalletCards, label: 'Свободно', value: '0 ₽', color: '#e4f030' },
-  ],
-  'Семья': [
-    { icon: ArrowDownRight, label: 'В бюджет', value: '0 ₽', color: '#c084fc' },
-    { icon: ArrowUpRight, label: 'Общие расходы', value: '0 ₽', color: '#f87171' },
-    { icon: PiggyBank, label: 'Общие накопления', value: '0 ₽', color: '#34d399' },
-    { icon: Users, label: 'Совместные цели', value: '0 ₽', color: '#60a5fa' },
-  ],
-  'Бизнес': [
-    { icon: ArrowDownRight, label: 'Выручка', value: '0 ₽', color: '#f59e0b' },
-    { icon: ArrowUpRight, label: 'Расходы бизнеса', value: '0 ₽', color: '#f87171' },
-    { icon: TrendingUp, label: 'Прибыль', value: '0 ₽', color: '#34d399' },
-    { icon: Briefcase, label: 'Маржа', value: '0%', color: '#c084fc' },
-  ],
-} as const
+export function MonthlyMetrics({ show, ctx = 'Все', snapshot }: { show: boolean; ctx?: FinanceContext; snapshot: FinanceSnapshot }) {
+  const income = formatMoneyMinor(snapshot.monthlyIncomeMinor)
+  const expense = formatMoneyMinor(snapshot.monthlyExpenseMinor)
+  const net = formatMoneyMinor(snapshot.monthlyNetMinor)
+  const capital = formatMoneyMinor(snapshot.totalBalanceMinor)
+  const margin = snapshot.monthlyIncomeMinor > 0 ? `${Math.round((snapshot.monthlyNetMinor / snapshot.monthlyIncomeMinor) * 100)}%` : '0%'
 
-export function MonthlyMetrics({ show, ctx = 'Все' }: { show: boolean; ctx?: string }) {
-  const metrics = CONFIG[ctx as keyof typeof CONFIG] || CONFIG['Все']
+  const metrics = ctx === 'Личные'
+    ? [
+        { icon: ArrowDownRight, label: 'Личные доходы', value: income, color: '#60a5fa' },
+        { icon: ArrowUpRight, label: 'Личные расходы', value: expense, color: '#f87171' },
+        { icon: TrendingUp, label: 'Чистый поток', value: net, color: '#34d399' },
+        { icon: WalletCards, label: 'На счетах', value: capital, color: '#e4f030' },
+      ]
+    : ctx === 'Семья'
+      ? [
+          { icon: ArrowDownRight, label: 'В бюджет', value: income, color: '#c084fc' },
+          { icon: ArrowUpRight, label: 'Общие расходы', value: expense, color: '#f87171' },
+          { icon: TrendingUp, label: 'Чистый поток', value: net, color: '#34d399' },
+          { icon: Users, label: 'Общий бюджет', value: capital, color: '#60a5fa' },
+        ]
+      : ctx === 'Бизнес'
+        ? [
+            { icon: ArrowDownRight, label: 'Выручка', value: income, color: '#f59e0b' },
+            { icon: ArrowUpRight, label: 'Расходы бизнеса', value: expense, color: '#f87171' },
+            { icon: TrendingUp, label: 'Прибыль', value: net, color: '#34d399' },
+            { icon: Briefcase, label: 'Маржа', value: margin, color: '#c084fc' },
+          ]
+        : [
+            { icon: ArrowDownRight, label: 'Доходы', value: income, color: '#e4f030' },
+            { icon: ArrowUpRight, label: 'Расходы', value: expense, color: '#f87171' },
+            { icon: TrendingUp, label: 'Чистый поток', value: net, color: '#34d399' },
+            { icon: PiggyBank, label: 'Капитал', value: capital, color: '#c084fc' },
+          ]
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -39,7 +45,7 @@ export function MonthlyMetrics({ show, ctx = 'Все' }: { show: boolean; ctx?: 
           </div>
           <p style={{ margin: '0 0 5px', fontSize: 9, color: '#646c79', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</p>
           <p style={{ margin: '0 0 3px', fontFamily: 'JetBrains Mono, monospace', fontSize: 17, fontWeight: 800, color, lineHeight: 1 }}>{show ? value : '•••••'}</p>
-          <p style={{ margin: 0, fontSize: 9, color: '#454c58' }}>Нет данных за период</p>
+          <p style={{ margin: 0, fontSize: 9, color: '#454c58' }}>Текущий месяц</p>
         </div>
       ))}
     </div>
