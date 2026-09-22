@@ -11,8 +11,14 @@ import { isSupabaseConfigured } from '../lib/supabase'
 
 const EMPTY_SNAPSHOT: FinanceSnapshot = {
   totalBalanceMinor: 0,
+  freeBalanceMinor: 0,
+  restrictedProjectMinor: 0,
+  earnedProjectMinor: 0,
+  outstandingProjectMinor: 0,
+  projectCount: 0,
   accountCount: 0,
   monthlyIncomeMinor: 0,
+  monthlyCashInMinor: 0,
   monthlyExpenseMinor: 0,
   monthlyNetMinor: 0,
   balancesByKind: { personal: 0, family: 0, business: 0 },
