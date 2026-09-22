@@ -114,7 +114,27 @@ as $$
   );
 $$;
 
--- New account bootstrap: profile + personal workspace + owner membership + defaults.
+-- Any workspace created by an authenticated user gets that user as owner.
+create or replace function public.handle_new_workspace()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.workspace_members (workspace_id, user_id, role)
+  values (new.id, new.created_by, 'owner')
+  on conflict (workspace_id, user_id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_workspace_created on public.workspaces;
+create trigger on_workspace_created
+after insert on public.workspaces
+for each row execute procedure public.handle_new_workspace();
+
+-- New account bootstrap: profile + personal workspace + defaults.
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -131,9 +151,6 @@ begin
   insert into public.workspaces (name, kind, base_currency, created_by)
   values ('Личные деньги', 'personal', 'RUB', new.id)
   returning id into new_workspace_id;
-
-  insert into public.workspace_members (workspace_id, user_id, role)
-  values (new_workspace_id, new.id, 'owner');
 
   insert into public.categories (workspace_id, name, category_type, is_system)
   values
