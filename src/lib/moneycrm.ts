@@ -95,13 +95,32 @@ export function formatMoneyMinor(value: number, currency = 'RUB') {
 }
 
 export async function listWorkspaces(): Promise<Workspace[]> {
-  const { data, error } = await client()
-    .from('workspaces')
-    .select('id,name,kind,base_currency')
-    .order('created_at', { ascending: true })
-
+  const auth = client()
+  const [{ data: rows, error }, { data: userData }] = await Promise.all([
+    auth.from('workspaces').select('id,name,kind,base_currency').order('created_at', { ascending: true }),
+    auth.auth.getUser(),
+  ])
   if (error) throw error
-  return (data ?? []) as Workspace[]
+
+  let activeFamilyId: string | null = null
+  if (userData.user) {
+    const { data: profile } = await auth
+      .from('profiles')
+      .select('active_family_workspace_id')
+      .eq('id', userData.user.id)
+      .maybeSingle()
+    activeFamilyId = profile?.active_family_workspace_id ?? null
+  }
+
+  const workspaces = (rows ?? []) as Workspace[]
+  if (!activeFamilyId) return workspaces
+
+  return [...workspaces].sort((a, b) => {
+    if (a.kind !== 'family' || b.kind !== 'family') return 0
+    if (a.id === activeFamilyId) return -1
+    if (b.id === activeFamilyId) return 1
+    return 0
+  })
 }
 
 export async function getPrimaryWorkspace(): Promise<Workspace | null> {
@@ -111,7 +130,10 @@ export async function getPrimaryWorkspace(): Promise<Workspace | null> {
 
 export function selectWorkspacesForContext(workspaces: Workspace[], context: FinanceContext | string) {
   const kind = contextToKind(context)
-  return kind ? workspaces.filter(workspace => workspace.kind === kind) : workspaces
+  if (!kind) return workspaces
+  const matches = workspaces.filter(workspace => workspace.kind === kind)
+  // A user may technically belong to more than one family. The active family is sorted first by listWorkspaces().
+  return kind === 'family' ? matches.slice(0, 1) : matches
 }
 
 export async function listAccountsForWorkspaces(workspaceIds: string[]): Promise<MoneyAccount[]> {
@@ -246,7 +268,9 @@ export async function acceptProject(projectId: string, note?: string) {
 }
 
 export async function getFinanceSnapshot(context: FinanceContext | string): Promise<FinanceSnapshot> {
-  const workspaces = await listWorkspaces()
+  const auth = client()
+  const [{ data: userData }, workspaces] = await Promise.all([auth.auth.getUser(), listWorkspaces()])
+  const currentUserId = userData.user?.id ?? null
   const selected = selectWorkspacesForContext(workspaces, context)
   const workspaceIds = selected.map(workspace => workspace.id)
   const accounts = await listAccountsForWorkspaces(workspaceIds)
@@ -262,6 +286,33 @@ export async function getFinanceSnapshot(context: FinanceContext | string): Prom
     accountCountByKind[kind] += 1
   }
 
+  const familyWorkspaceIds = (context === 'Семья'
+    ? selected.filter(workspace => workspace.kind === 'family')
+    : context === 'Все'
+      ? workspaces.filter(workspace => workspace.kind === 'family')
+      : []
+  ).map(workspace => workspace.id)
+
+  let sharedResourceMinor = 0
+  let sharedResourceCount = 0
+  if (familyWorkspaceIds.length > 0) {
+    const { data: shares, error: sharesError } = await auth
+      .from('family_account_shares')
+      .select('owner_user_id,balance_minor')
+      .in('family_workspace_id', familyWorkspaceIds)
+      .eq('include_in_family_resources', true)
+    if (sharesError) throw sharesError
+
+    for (const share of shares ?? []) {
+      // In "Все" the current user's personal account is already included directly, so don't count its family snapshot twice.
+      if (context === 'Все' && currentUserId && share.owner_user_id === currentUserId) continue
+      sharedResourceMinor += Number(share.balance_minor ?? 0)
+      sharedResourceCount += 1
+    }
+    balancesByKind.family += sharedResourceMinor
+    accountCountByKind.family += sharedResourceCount
+  }
+
   let monthlyIncomeMinor = 0
   let monthlyCashInMinor = 0
   let monthlyExpenseMinor = 0
@@ -270,18 +321,18 @@ export async function getFinanceSnapshot(context: FinanceContext | string): Prom
   let outstandingProjectMinor = 0
   let projectCount = 0
 
-  if (workspaceIds.length > 0) {
-    const now = new Date()
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+  const now = new Date()
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
 
+  if (workspaceIds.length > 0) {
     const [{ data: transactions, error: txError }, { data: projects, error: projectError }] = await Promise.all([
-      client()
+      auth
         .from('transactions')
         .select('amount_minor,transaction_type,project_id')
         .in('workspace_id', workspaceIds)
         .eq('status', 'posted')
         .gte('occurred_at', monthStart),
-      client()
+      auth
         .from('project_finance_summary')
         .select('project_id,restricted_minor,earned_minor,outstanding_minor')
         .in('workspace_id', workspaceIds),
@@ -309,7 +360,7 @@ export async function getFinanceSnapshot(context: FinanceContext | string): Prom
     }
 
     if (projectIds.length > 0) {
-      const { data: releasedPayments, error: releasedError } = await client()
+      const { data: releasedPayments, error: releasedError } = await auth
         .from('project_payments')
         .select('amount_minor,refunded_minor')
         .in('project_id', projectIds)
@@ -323,7 +374,28 @@ export async function getFinanceSnapshot(context: FinanceContext | string): Prom
     }
   }
 
-  const totalBalanceMinor = accounts.reduce((sum, account) => sum + account.balance_minor, 0)
+  if (familyWorkspaceIds.length > 0) {
+    const { data: familyActivity, error: familyActivityError } = await auth
+      .from('family_shared_transactions')
+      .select('owner_user_id,amount_minor')
+      .in('family_workspace_id', familyWorkspaceIds)
+      .gte('occurred_at', monthStart)
+    if (familyActivityError) throw familyActivityError
+
+    for (const row of familyActivity ?? []) {
+      // Same anti-double-count rule as balances in the global view.
+      if (context === 'Все' && currentUserId && row.owner_user_id === currentUserId) continue
+      const amount = Number(row.amount_minor ?? 0)
+      if (amount < 0) monthlyExpenseMinor += Math.abs(amount)
+      if (amount > 0) {
+        monthlyCashInMinor += amount
+        monthlyIncomeMinor += amount
+      }
+    }
+  }
+
+  const directBalanceMinor = accounts.reduce((sum, account) => sum + account.balance_minor, 0)
+  const totalBalanceMinor = directBalanceMinor + sharedResourceMinor
   const freeBalanceMinor = Math.max(totalBalanceMinor - restrictedProjectMinor, 0)
 
   return {
@@ -333,7 +405,7 @@ export async function getFinanceSnapshot(context: FinanceContext | string): Prom
     earnedProjectMinor,
     outstandingProjectMinor,
     projectCount,
-    accountCount: accounts.length,
+    accountCount: accounts.length + sharedResourceCount,
     monthlyIncomeMinor,
     monthlyCashInMinor,
     monthlyExpenseMinor,
