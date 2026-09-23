@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MoneyCRM Ozon Bridge",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Локальная синхронизация Ozon Банка с MoneyCRM: все счета и карты, точные балансы, история с выбранной даты и корректный учёт кредиток.",
   "permissions": ["tabs"],
   "host_permissions": [
