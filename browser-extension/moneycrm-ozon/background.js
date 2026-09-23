@@ -7,7 +7,7 @@ async function findOrOpenOzonTab() {
   return { tab, created: true }
 }
 
-async function waitForTabReady(tabId, timeoutMs = 15000) {
+async function waitForTabReady(tabId, timeoutMs = 18000) {
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
     const tab = await chrome.tabs.get(tabId).catch(() => null)
@@ -21,15 +21,27 @@ function isMissingReceiver(error) {
   return /receiving end does not exist|could not establish connection/i.test(String(error?.message || error || ''))
 }
 
-async function reloadForBridge(tabId) {
+async function reloadForBridge(tabId, delay = 2600) {
   await chrome.tabs.reload(tabId)
   await waitForTabReady(tabId)
-  await new Promise(resolve => setTimeout(resolve, 2200))
+  await new Promise(resolve => setTimeout(resolve, delay))
+}
+
+async function openHomeForBalances(tabId) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null)
+  const current = String(tab?.url || '')
+  if (!/^https:\/\/finance\.ozon\.ru\/?(?:[?#].*)?$/i.test(current)) {
+    await chrome.tabs.update(tabId, { url: OZON_HOME })
+    await waitForTabReady(tabId)
+    await new Promise(resolve => setTimeout(resolve, 3500))
+  } else {
+    await reloadForBridge(tabId, 3500)
+  }
 }
 
 async function sendToOzon(tabId, message, allowReload = true) {
   let lastError = null
-  for (let attempt = 0; attempt < 6; attempt += 1) {
+  for (let attempt = 0; attempt < 7; attempt += 1) {
     try {
       return await chrome.tabs.sendMessage(tabId, message)
     } catch (error) {
@@ -39,10 +51,14 @@ async function sendToOzon(tabId, message, allowReload = true) {
         allowReload = false
         continue
       }
-      await new Promise(resolve => setTimeout(resolve, 450))
+      await new Promise(resolve => setTimeout(resolve, 500))
     }
   }
   throw lastError || new Error('Ozon connector is not ready')
+}
+
+async function collect(tabId, fromDate, allowReload = true) {
+  return sendToOzon(tabId, { type: 'moneycrm:ozon-collect', fromDate: fromDate || null }, allowReload)
 }
 
 async function handleSync(options = {}) {
@@ -50,20 +66,19 @@ async function handleSync(options = {}) {
   if (!tab.id) throw new Error('Не удалось открыть Ozon Банк')
 
   await waitForTabReady(tab.id)
-  let result = await sendToOzon(tab.id, {
-    type: 'moneycrm:ozon-collect',
-    fromDate: options.fromDate || null,
-  })
+  let result = await collect(tab.id, options.fromDate)
 
   if (result?.status === 'needs_api_refresh') {
-    await reloadForBridge(tab.id)
-    result = await sendToOzon(tab.id, {
-      type: 'moneycrm:ozon-collect',
-      fromDate: options.fromDate || null,
-    }, false)
+    await reloadForBridge(tab.id, 3000)
+    result = await collect(tab.id, options.fromDate, false)
   }
 
-  if (!result || result.status === 'login_required' || result.status === 'needs_navigation' || result.status === 'needs_api_refresh') {
+  if (result?.status === 'needs_balance_refresh') {
+    await openHomeForBalances(tab.id)
+    result = await collect(tab.id, options.fromDate, false)
+  }
+
+  if (!result || ['login_required','needs_navigation','needs_api_refresh','needs_balance_refresh'].includes(result.status)) {
     await chrome.tabs.update(tab.id, { active: true })
   }
 
@@ -71,6 +86,13 @@ async function handleSync(options = {}) {
     return {
       status: 'login_required',
       message: 'Ozon открыт. Войдите в официальный кабинет один раз, затем вернитесь в MoneyCRM и нажмите синхронизацию снова.',
+    }
+  }
+
+  if (result?.status === 'needs_balance_refresh') {
+    return {
+      ...result,
+      message: 'MoneyCRM уже нашёл банковские карты, но Ozon не отдал баланс в загруженных ответах. Оставьте открытую главную страницу Ozon Банка и повторите синхронизацию — пустые счета при этом не создаются.',
     }
   }
 
