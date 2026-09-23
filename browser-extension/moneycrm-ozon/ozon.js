@@ -1,5 +1,6 @@
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const apiAccounts = new Map()
+let apiDiagnostics = { payloadCount: 0, identityCount: 0, financialCount: 0 }
 
 function normalize(value) {
   return String(value || '').replace(/\s+/g, ' ').trim()
@@ -25,7 +26,13 @@ function mergeApiAccounts(accounts) {
     if (!account || account.apiVerified !== true) continue
     const key = account.externalAccountId || account.accountMask
     if (!key) continue
-    apiAccounts.set(key, { ...(apiAccounts.get(key) || {}), ...account, apiVerified: true })
+    const previous = apiAccounts.get(key) || {}
+    const merged = { ...previous }
+    for (const [field, value] of Object.entries(account)) {
+      if (value !== null && value !== undefined && value !== '') merged[field] = value
+    }
+    merged.apiVerified = true
+    apiAccounts.set(key, merged)
   }
 }
 
@@ -33,21 +40,35 @@ window.addEventListener('message', event => {
   if (event.source !== window || event.origin !== location.origin) return
   if (event.data?.type !== 'MONEYCRM_OZON_API_ACCOUNTS') return
   mergeApiAccounts(event.data.accounts)
+  if (event.data.diagnostics && typeof event.data.diagnostics === 'object') {
+    apiDiagnostics = { ...apiDiagnostics, ...event.data.diagnostics }
+  }
 })
 
 function requestApiAccounts() {
   window.postMessage({ type: 'MONEYCRM_OZON_API_ACCOUNTS_REQUEST' }, location.origin)
 }
 
-async function waitForApiAccounts(timeoutMs = 3500) {
+async function waitForApiAccounts(timeoutMs = 4500) {
   requestApiAccounts()
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
-    if (apiAccounts.size) return [...apiAccounts.values()]
+    if (apiAccounts.size) {
+      await sleep(250)
+      requestApiAccounts()
+      return [...apiAccounts.values()]
+    }
     await sleep(150)
     requestApiAccounts()
   }
   return [...apiAccounts.values()]
+}
+
+function hasFinancialData(account) {
+  if (!account || account.apiVerified !== true) return false
+  if (account.hasFinancialData === true) return true
+  return [account.currentBalanceMinor, account.creditLimitMinor, account.creditDebtMinor, account.creditAvailableMinor, account.creditMinPaymentMinor]
+    .some(value => value !== null && value !== undefined)
 }
 
 function findOperationsControl() {
@@ -136,32 +157,37 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'moneycrm:ozon-collect') return false
   ;(async () => {
     if (looksLikeLogin()) {
+      sendResponse({ status: 'login_required', message: 'Войдите в официальный кабинет Ozon Банка. MoneyCRM не получает ваш логин, код-пароль или SMS-коды.' })
+      return
+    }
+
+    const allAccounts = await waitForApiAccounts()
+    if (!allAccounts.length) {
+      sendResponse({ status: 'needs_api_refresh', message: 'Кабинет Ozon открыт, но ответы со счетами ещё не пойманы. MoneyCRM перезагрузит вкладку Ozon и попробует ещё раз.', diagnostics: apiDiagnostics })
+      return
+    }
+
+    const financialAccounts = allAccounts.filter(hasFinancialData)
+    if (!financialAccounts.length) {
       sendResponse({
-        status: 'login_required',
-        message: 'Войдите в официальный кабинет Ozon Банка. MoneyCRM не получает ваш логин, код-пароль или SMS-коды.',
+        status: 'needs_balance_refresh',
+        message: 'Карты Ozon найдены, но ответ с балансами ещё не пришёл. MoneyCRM откроет главную Ozon Банка и повторит синхронизацию автоматически.',
+        diagnostics: { ...apiDiagnostics, identityCount: allAccounts.length, financialCount: 0 },
       })
       return
     }
-    const accounts = await waitForApiAccounts()
-    if (!accounts.length) {
-      sendResponse({
-        status: 'needs_api_refresh',
-        message: 'Кабинет Ozon открыт, но ответы со счетами ещё не пойманы. MoneyCRM перезагрузит вкладку Ozon и попробует ещё раз.',
-      })
-      return
-    }
+
     const text = await collectOperationText(message.fromDate || null)
-    const current = currentVerifiedAccount(accounts)
+    const current = currentVerifiedAccount(financialAccounts)
     sendResponse({
       status: 'ok',
       text: text || 'Ozon API sync',
-      accountMeta: current ? { ...current, accounts } : { accounts },
+      accountMeta: current ? { ...current, accounts: financialAccounts } : { accounts: financialAccounts },
       fromDate: message.fromDate || null,
       pageUrl: location.href,
       pageTitle: document.title,
+      diagnostics: { ...apiDiagnostics, identityCount: allAccounts.length, financialCount: financialAccounts.length },
     })
-  })().catch(error => {
-    sendResponse({ status: 'error', message: error instanceof Error ? error.message : String(error) })
-  })
+  })().catch(error => sendResponse({ status: 'error', message: error instanceof Error ? error.message : String(error) }))
   return true
 })
