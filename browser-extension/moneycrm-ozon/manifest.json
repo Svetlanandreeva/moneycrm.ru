@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "MoneyCRM Ozon Bridge",
+  "version": "0.1.0",
+  "description": "Локальная синхронизация Ozon Банка с MoneyCRM без передачи банковского пароля в MoneyCRM.",
+  "permissions": ["tabs"],
+  "host_permissions": [
+    "https://finance.ozon.ru/*",
+    "https://moneycrm.ru/*",
+    "https://www.moneycrm.ru/*",
+    "https://moneycrmru.vercel.app/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://moneycrm.ru/*",
+        "https://www.moneycrm.ru/*",
+        "https://moneycrmru.vercel.app/*"
+      ],
+      "js": ["moneycrm.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://finance.ozon.ru/*"],
+      "js": ["ozon.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
