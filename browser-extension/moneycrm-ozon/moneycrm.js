@@ -15,7 +15,10 @@ window.addEventListener('message', event => {
   }
 
   if (message.type === 'MONEYCRM_OZON_SYNC') {
-    chrome.runtime.sendMessage({ type: 'moneycrm:ozon-sync' }, response => {
+    chrome.runtime.sendMessage({
+      type: 'moneycrm:ozon-sync',
+      fromDate: message.fromDate || null,
+    }, response => {
       const requestId = message.requestId || null
       if (chrome.runtime.lastError) {
         reply('MONEYCRM_OZON_SYNC_RESULT', {
@@ -25,7 +28,10 @@ window.addEventListener('message', event => {
         })
         return
       }
-      reply('MONEYCRM_OZON_SYNC_RESULT', { requestId, ...(response || { status: 'error', message: 'Нет ответа от коннектора' }) })
+      reply('MONEYCRM_OZON_SYNC_RESULT', {
+        requestId,
+        ...(response || { status: 'error', message: 'Нет ответа от коннектора' }),
+      })
     })
   }
 })
