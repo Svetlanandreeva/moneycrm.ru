@@ -7,7 +7,7 @@ async function findOrOpenOzonTab() {
   return { tab, created: true }
 }
 
-async function waitForTabReady(tabId, timeoutMs = 12000) {
+async function waitForTabReady(tabId, timeoutMs = 15000) {
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
     const tab = await chrome.tabs.get(tabId).catch(() => null)
@@ -17,15 +17,33 @@ async function waitForTabReady(tabId, timeoutMs = 12000) {
   return false
 }
 
+function receivingEndMissing(error) {
+  const message = error instanceof Error ? error.message : String(error || '')
+  return /Receiving end does not exist|Could not establish connection/i.test(message)
+}
+
 async function sendToOzon(tabId, message) {
   let lastError = null
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  let reloaded = false
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
       return await chrome.tabs.sendMessage(tabId, message)
     } catch (error) {
       lastError = error
-      await new Promise(resolve => setTimeout(resolve, 450))
+      if (!reloaded && receivingEndMissing(error)) {
+        reloaded = true
+        await chrome.tabs.reload(tabId)
+        await waitForTabReady(tabId, 15000)
+        await new Promise(resolve => setTimeout(resolve, 900))
+        continue
+      }
+      await new Promise(resolve => setTimeout(resolve, 500))
     }
+  }
+
+  if (receivingEndMissing(lastError)) {
+    throw new Error('Вкладка Ozon была открыта до обновления Bridge. Я попыталась перезагрузить её автоматически. Если ошибка повторится, обновите вкладку Ozon один раз и нажмите синхронизацию снова.')
   }
   throw lastError || new Error('Ozon connector is not ready')
 }
