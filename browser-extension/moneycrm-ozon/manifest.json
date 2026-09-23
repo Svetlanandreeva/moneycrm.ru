@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "MoneyCRM Ozon Bridge",
-  "version": "0.3.1",
-  "description": "Локальная синхронизация Ozon Банка с MoneyCRM: все счета и карты, точные балансы, история с выбранной даты и корректный учёт кредиток.",
+  "version": "0.4.0",
+  "description": "Локальная синхронизация Ozon Банка с MoneyCRM через ответы кабинета: реальные счета, балансы и корректный учёт кредиток.",
   "permissions": ["tabs"],
   "host_permissions": [
     "https://finance.ozon.ru/*",
@@ -25,8 +25,14 @@
     },
     {
       "matches": ["https://finance.ozon.ru/*"],
+      "js": ["ozon-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://finance.ozon.ru/*"],
       "js": ["ozon.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ]
 }
