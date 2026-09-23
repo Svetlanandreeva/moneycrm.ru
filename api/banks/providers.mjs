@@ -1,5 +1,12 @@
 import { bankRuntimeConfigured, everypayEnvironment, everypayProviders } from '../../server/banks.mjs'
 
+const ozonProvider = {
+  type: 'statement',
+  code: 'ozon_statement',
+  name: 'Ozon Банк',
+  description: 'Реальные операции из выписки · без передачи банковского пароля MoneyCRM',
+}
+
 const demoProvider = {
   type: 'demo',
   code: 'demo',
@@ -17,8 +24,8 @@ export default async function handler(req, res) {
     res.status(200).json({
       configured: true,
       environment: 'sandbox',
-      providers: [demoProvider],
-      supportedHint: ['Сбер', 'Т-Банк', 'Альфа-Банк', 'Ozon Банк'],
+      providers: [ozonProvider, demoProvider],
+      supportedHint: ['Ozon Банк', 'Сбер', 'Т-Банк', 'Альфа-Банк'],
       mode: 'browser-demo',
     })
     return
@@ -29,15 +36,15 @@ export default async function handler(req, res) {
     res.status(200).json({
       configured: true,
       environment: everypayEnvironment().production ? 'production' : 'sandbox',
-      providers: [demoProvider, ...providers.filter(item => item?.type === 'bank')],
+      providers: [ozonProvider, demoProvider, ...providers.filter(item => item?.type === 'bank')],
       mode: 'hybrid',
     })
   } catch (error) {
     res.status(200).json({
       configured: true,
       environment: 'sandbox',
-      providers: [demoProvider],
-      supportedHint: ['Сбер', 'Т-Банк', 'Альфа-Банк', 'Ozon Банк'],
+      providers: [ozonProvider, demoProvider],
+      supportedHint: ['Ozon Банк', 'Сбер', 'Т-Банк', 'Альфа-Банк'],
       mode: 'browser-demo',
       error: error instanceof Error ? error.message : 'Provider unavailable',
     })
