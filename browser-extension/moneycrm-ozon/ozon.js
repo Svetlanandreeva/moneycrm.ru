@@ -97,7 +97,6 @@ async function collectOperationText(fromDate) {
     control.click()
     await sleep(1200)
   }
-
   const originalY = window.scrollY
   const maxSteps = scrollStepsFor(fromDate)
   let previousHeight = 0
@@ -115,7 +114,6 @@ async function collectOperationText(fromDate) {
   }
   snapshots.push(document.body?.innerText || '')
   window.scrollTo({ top: originalY, behavior: 'auto' })
-
   const unique = []
   const seen = new Set()
   for (const line of snapshots.flatMap(extractFinancialLines)) {
@@ -136,7 +134,6 @@ function currentVerifiedAccount(accounts) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'moneycrm:ozon-collect') return false
-
   ;(async () => {
     if (looksLikeLogin()) {
       sendResponse({
@@ -145,7 +142,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       })
       return
     }
-
     const accounts = await waitForApiAccounts()
     if (!accounts.length) {
       sendResponse({
@@ -154,12 +150,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       })
       return
     }
-
     const text = await collectOperationText(message.fromDate || null)
     const current = currentVerifiedAccount(accounts)
     sendResponse({
       status: 'ok',
-      text,
+      text: text || 'Ozon API sync',
       accountMeta: current ? { ...current, accounts } : { accounts },
       fromDate: message.fromDate || null,
       pageUrl: location.href,
@@ -168,6 +163,5 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   })().catch(error => {
     sendResponse({ status: 'error', message: error instanceof Error ? error.message : String(error) })
   })
-
   return true
 })
