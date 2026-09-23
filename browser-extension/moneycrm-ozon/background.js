@@ -30,12 +30,15 @@ async function sendToOzon(tabId, message) {
   throw lastError || new Error('Ozon connector is not ready')
 }
 
-async function handleSync() {
+async function handleSync(options = {}) {
   const { tab, created } = await findOrOpenOzonTab()
   if (!tab.id) throw new Error('Не удалось открыть Ozon Банк')
 
   await waitForTabReady(tab.id)
-  const result = await sendToOzon(tab.id, { type: 'moneycrm:ozon-collect' })
+  const result = await sendToOzon(tab.id, {
+    type: 'moneycrm:ozon-collect',
+    fromDate: options.fromDate || null,
+  })
 
   if (!result || result.status === 'login_required' || result.status === 'needs_navigation') {
     await chrome.tabs.update(tab.id, { active: true })
@@ -58,7 +61,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === 'moneycrm:ozon-sync') {
-    handleSync()
+    handleSync({ fromDate: message.fromDate || null })
       .then(result => sendResponse({ ok: true, ...result }))
       .catch(error => sendResponse({ ok: false, status: 'error', message: error instanceof Error ? error.message : String(error) }))
     return true
