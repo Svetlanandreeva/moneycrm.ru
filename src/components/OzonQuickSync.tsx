@@ -23,6 +23,7 @@ export function OzonQuickSync() {
   const [fromDate, setFromDate] = useState(DEFAULT_FROM_DATE)
   const activeRequest = useRef<string | null>(null)
   const pendingFromDate = useRef<string | null>(null)
+  const requestedWorkspaceId = useRef<string | null>(null)
 
   useEffect(() => {
     let pingTimer: number | null = null
@@ -58,6 +59,12 @@ export function OzonQuickSync() {
     const state = await listBankConnections()
     const existing = state.connections.find(connection => connection.provider === 'ozon_statement' && connection.status !== 'revoked') ?? null
     if (existing) return { workspaceId: existing.workspace_id, connection: existing }
+
+    const requested = requestedWorkspaceId.current
+      ? state.workspaces.find(workspace => workspace.id === requestedWorkspaceId.current)
+      : null
+    if (requested) return { workspaceId: requested.id, connection: null }
+
     const personal = state.workspaces.find(workspace => workspace.kind === 'personal')
     return { workspaceId: personal?.id || state.workspaces[0]?.id || '', connection: null }
   }
@@ -102,6 +109,7 @@ export function OzonQuickSync() {
           ? `Ozon обновлён: +${result.imported} операций${result.duplicates ? `, ${result.duplicates} дублей пропущено` : ''}.${creditNote}`
           : `Ozon уже актуален. Дублей пропущено: ${result.duplicates}.${creditNote}`,
       })
+      requestedWorkspaceId.current = null
       window.dispatchEvent(new CustomEvent('moneycrm:bank-sync-complete', { detail: { provider: 'ozon' } }))
     } catch (error) {
       setToast({ kind: 'error', text: error instanceof Error ? error.message : 'Ошибка синхронизации Ozon Банка' })
@@ -116,7 +124,7 @@ export function OzonQuickSync() {
     if (bridgeState !== 'ready') {
       setToast({
         kind: 'info',
-        text: 'Для синхронизации одной кнопкой нужен локальный MoneyCRM Ozon Bridge. Банковский пароль при этом остаётся только на официальном сайте Ozon.',
+        text: 'Для синхронизации Ozon на компьютере установите MoneyCRM Ozon Bridge в Chrome. На телефоне уже синхронизированные данные отображаются автоматически.',
       })
       return
     }
@@ -149,12 +157,23 @@ export function OzonQuickSync() {
   }
 
   useEffect(() => {
+    const requestSync = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail
+      requestedWorkspaceId.current = detail?.workspaceId || null
+      void launchSync()
+    }
+
+    window.addEventListener('moneycrm:ozon-sync-request', requestSync as EventListener)
+    return () => window.removeEventListener('moneycrm:ozon-sync-request', requestSync as EventListener)
+  }, [bridgeState, syncing])
+
+  useEffect(() => {
     const interceptOzonRefresh = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null
       const button = target?.closest('button')
       if (!button) return
       const title = button.getAttribute('title') || ''
-      if (!/выписк|ozon/i.test(title)) return
+      if (!/ozon/i.test(title)) return
       if (bridgeState !== 'ready') return
       event.preventDefault()
       event.stopPropagation()
