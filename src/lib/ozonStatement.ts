@@ -4,6 +4,18 @@ import { supabase } from './supabase'
 
 GlobalWorkerOptions.workerSrc = pdfWorker
 
+export type OzonAccountMeta = {
+  accountType?: 'bank' | 'credit'
+  accountName?: string | null
+  accountMask?: string | null
+  externalAccountId?: string | null
+  creditLimitMinor?: number | null
+  creditDebtMinor?: number | null
+  creditAvailableMinor?: number | null
+  creditMinPaymentMinor?: number | null
+  creditPaymentDueAt?: string | null
+}
+
 type ParsedOperation = {
   occurredAt: string
   amountMinor: number
@@ -154,12 +166,8 @@ async function statementLines(file: File) {
 export async function parseOzonStatement(file: File): Promise<ParsedStatement> {
   const lines = await statementLines(file)
   const text = lines.join('\n')
-  const operations = parseOperationLines(lines)
-  if (!operations.length) {
-    throw new Error('Не удалось распознать операции в выписке. Пришлите мне этот файл — подстроим парсер под формат Ozon.')
-  }
   return {
-    operations,
+    operations: parseOperationLines(lines),
     openingBalanceMinor: findBalance(text, 'opening'),
     closingBalanceMinor: findBalance(text, 'closing'),
   }
@@ -171,7 +179,42 @@ async function digest(input: string) {
   return [...new Uint8Array(hash)].map(value => value.toString(16).padStart(2, '0')).join('')
 }
 
-export async function importOzonStatement(input: { workspaceId: string; file: File; accountName?: string }) {
+function filteredByStartDate(operations: ParsedOperation[], fromDate?: string | null) {
+  if (!fromDate) return operations
+  const start = Date.parse(`${fromDate}T00:00:00.000Z`)
+  if (!Number.isFinite(start)) return operations
+  return operations.filter(operation => Date.parse(operation.occurredAt) >= start)
+}
+
+function normalizedCreditMeta(meta?: OzonAccountMeta | null) {
+  if (!meta) return null
+  const limit = meta.creditLimitMinor == null ? null : Math.max(0, Number(meta.creditLimitMinor))
+  const available = meta.creditAvailableMinor == null ? null : Math.max(0, Number(meta.creditAvailableMinor))
+  const explicitDebt = meta.creditDebtMinor == null ? null : Math.max(0, Number(meta.creditDebtMinor))
+  const inferredDebt = explicitDebt ?? (limit !== null && available !== null ? Math.max(limit - available, 0) : null)
+  return {
+    ...meta,
+    creditLimitMinor: limit,
+    creditAvailableMinor: available,
+    creditDebtMinor: inferredDebt,
+    creditMinPaymentMinor: meta.creditMinPaymentMinor == null ? null : Math.max(0, Number(meta.creditMinPaymentMinor)),
+  }
+}
+
+function transactionTypeFor(accountType: string, operation: ParsedOperation) {
+  if (accountType !== 'credit') return operation.amountMinor > 0 ? 'income' : 'expense'
+  if (operation.amountMinor < 0) return 'expense'
+  if (/возврат|кэшбэк|кешбэк|refund/i.test(operation.description)) return 'refund'
+  return 'transfer'
+}
+
+export async function importOzonStatement(input: {
+  workspaceId: string
+  file: File
+  accountName?: string
+  fromDate?: string | null
+  accountMeta?: OzonAccountMeta | null
+}) {
   const auth = db()
   const [{ data: userData, error: userError }, { data: workspace, error: workspaceError }, parsed] = await Promise.all([
     auth.auth.getUser(),
@@ -183,9 +226,15 @@ export async function importOzonStatement(input: { workspaceId: string; file: Fi
   const user = userData.user
   if (!user) throw new Error('Not authenticated')
 
+  const meta = normalizedCreditMeta(input.accountMeta)
+  const operations = filteredByStartDate(parsed.operations, input.fromDate)
+  if (!parsed.operations.length && !meta) {
+    throw new Error('Не удалось распознать операции в выписке. Пришлите мне этот файл — подстроим парсер под формат Ozon.')
+  }
+
   let { data: connection, error: connectionError } = await auth
     .from('bank_connections')
-    .select('id,status')
+    .select('id,status,sync_from_at')
     .eq('workspace_id', input.workspaceId)
     .eq('provider', 'ozon_statement')
     .neq('status', 'revoked')
@@ -205,32 +254,47 @@ export async function importOzonStatement(input: { workspaceId: string; file: Fi
       status: 'active',
       connected_at: now,
       last_synced_at: now,
+      sync_from_at: input.fromDate || null,
       created_by: user.id,
-    }).select('id,status').single()
+    }).select('id,status,sync_from_at').single()
     if (created.error) throw created.error
     connection = created.data
   }
+
+  const isCredit = meta?.accountType === 'credit'
+  const accountMask = meta?.accountMask?.replace(/\D/g, '').slice(-4) || null
+  const externalAccountId = meta?.externalAccountId?.trim()
+    || (accountMask ? `ozon-${accountMask}` : isCredit ? 'ozon-credit-main' : 'ozon-main')
+  const detectedAccountName = meta?.accountName?.trim()
+    || input.accountName?.trim()
+    || (isCredit ? 'Ozon Кредитная карта' : 'Ozon Карта')
 
   let { data: link, error: linkError } = await auth
     .from('bank_account_links')
     .select('id,account_id')
     .eq('connection_id', connection.id)
-    .eq('external_account_id', 'ozon-main')
+    .eq('external_account_id', externalAccountId)
     .maybeSingle()
   if (linkError) throw linkError
 
   if (!link) {
-    const sumOperations = parsed.operations.reduce((sum, operation) => sum + operation.amountMinor, 0)
-    const openingBalance = parsed.openingBalanceMinor
-      ?? (parsed.closingBalanceMinor !== null ? parsed.closingBalanceMinor - sumOperations : 0)
-    const accountType = workspace.kind === 'business' ? 'business' : 'bank'
+    const sumOperations = operations.reduce((sum, operation) => sum + operation.amountMinor, 0)
+    const openingBalance = isCredit
+      ? 0
+      : parsed.openingBalanceMinor ?? (parsed.closingBalanceMinor !== null ? parsed.closingBalanceMinor - sumOperations : 0)
+    const accountType = isCredit ? 'credit' : workspace.kind === 'business' ? 'business' : 'bank'
     const account = await auth.from('accounts').insert({
       workspace_id: input.workspaceId,
-      name: input.accountName?.trim() || 'Ozon Карта',
+      name: detectedAccountName,
       account_type: accountType,
       currency: 'RUB',
       opening_balance_minor: openingBalance,
       institution: 'Ozon Банк',
+      credit_limit_minor: isCredit ? meta?.creditLimitMinor ?? null : null,
+      credit_debt_minor: isCredit ? meta?.creditDebtMinor ?? null : null,
+      credit_available_minor: isCredit ? meta?.creditAvailableMinor ?? null : null,
+      credit_min_payment_minor: isCredit ? meta?.creditMinPaymentMinor ?? null : null,
+      credit_payment_due_at: isCredit ? meta?.creditPaymentDueAt ?? null : null,
       created_by: user.id,
     }).select('id').single()
     if (account.error) throw account.error
@@ -238,25 +302,54 @@ export async function importOzonStatement(input: { workspaceId: string; file: Fi
     const linked = await auth.from('bank_account_links').insert({
       connection_id: connection.id,
       account_id: account.data.id,
-      external_account_id: 'ozon-main',
-      external_name: input.accountName?.trim() || 'Ozon Карта',
-      account_mask: null,
+      external_account_id: externalAccountId,
+      external_name: detectedAccountName,
+      account_mask: accountMask,
       currency: 'RUB',
       last_synced_at: now,
     }).select('id,account_id').single()
     if (linked.error) throw linked.error
     link = linked.data
+  } else if (meta) {
+    const accountPatch: Record<string, unknown> = {
+      name: detectedAccountName,
+      updated_at: now,
+    }
+    if (isCredit) {
+      accountPatch.account_type = 'credit'
+      accountPatch.credit_limit_minor = meta.creditLimitMinor ?? null
+      accountPatch.credit_debt_minor = meta.creditDebtMinor ?? null
+      accountPatch.credit_available_minor = meta.creditAvailableMinor ?? null
+      accountPatch.credit_min_payment_minor = meta.creditMinPaymentMinor ?? null
+      accountPatch.credit_payment_due_at = meta.creditPaymentDueAt ?? null
+    }
+    const { error: accountUpdateError } = await auth.from('accounts').update(accountPatch).eq('id', link.account_id)
+    if (accountUpdateError) throw accountUpdateError
+    const { error: linkUpdateError } = await auth.from('bank_account_links').update({
+      external_name: detectedAccountName,
+      account_mask: accountMask,
+      last_synced_at: now,
+    }).eq('id', link.id)
+    if (linkUpdateError) throw linkUpdateError
   }
+
+  const { data: linkedAccount, error: linkedAccountError } = await auth
+    .from('accounts')
+    .select('account_type')
+    .eq('id', link.account_id)
+    .single()
+  if (linkedAccountError) throw linkedAccountError
+  const effectiveAccountType = String(linkedAccount.account_type || 'bank')
 
   let imported = 0
   let duplicates = 0
   const occurrence = new Map<string, number>()
 
-  for (const operation of parsed.operations) {
+  for (const operation of operations) {
     const base = `${operation.occurredAt}|${operation.amountMinor}|${operation.description}`
     const index = (occurrence.get(base) ?? 0) + 1
     occurrence.set(base, index)
-    const externalId = `ozon-${await digest(`${base}|${index}`)}`
+    const externalId = `ozon-${externalAccountId}-${await digest(`${base}|${index}`)}`
 
     const { data: exists, error: existsError } = await auth
       .from('bank_transaction_imports')
@@ -280,16 +373,23 @@ export async function importOzonStatement(input: { workspaceId: string; file: Fi
       description: operation.description,
       merchant_name: operation.merchant,
       import_status: 'new',
-      raw_data: { source: 'ozon_statement', row: operation.raw, filename: input.file.name },
+      raw_data: {
+        source: 'ozon_statement',
+        row: operation.raw,
+        filename: input.file.name,
+        sync_from_at: input.fromDate || connection.sync_from_at || null,
+        account_type: effectiveAccountType,
+      },
     }).select('id').single()
     if (staged.error) throw staged.error
 
+    const transactionType = transactionTypeFor(effectiveAccountType, operation)
     const transaction = await auth.from('transactions').insert({
       workspace_id: input.workspaceId,
       account_id: link.account_id,
       amount_minor: operation.amountMinor,
       currency: 'RUB',
-      transaction_type: operation.amountMinor > 0 ? 'income' : 'expense',
+      transaction_type: transactionType,
       context: workspace.kind,
       counterparty: operation.merchant,
       note: operation.description,
@@ -314,8 +414,20 @@ export async function importOzonStatement(input: { workspaceId: string; file: Fi
 
   await Promise.all([
     auth.from('bank_account_links').update({ last_synced_at: now }).eq('id', link.id),
-    auth.from('bank_connections').update({ status: 'active', connected_at: now, last_synced_at: now, error_message: null }).eq('id', connection.id),
+    auth.from('bank_connections').update({
+      status: 'active',
+      connected_at: now,
+      last_synced_at: now,
+      sync_from_at: input.fromDate || connection.sync_from_at || null,
+      error_message: null,
+    }).eq('id', connection.id),
   ])
 
-  return { imported, duplicates, total: parsed.operations.length }
+  return {
+    imported,
+    duplicates,
+    total: operations.length,
+    accountType: effectiveAccountType,
+    accountName: detectedAccountName,
+  }
 }
