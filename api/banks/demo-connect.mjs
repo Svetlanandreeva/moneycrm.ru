@@ -5,7 +5,10 @@ export default async function handler(req, res) {
   try {
     const { user, client } = await requireUser(req)
     const { connectionId, token } = req.body || {}
-    if (!connectionId || !token) throw new Error('Тестовое подключение устарело. Запустите его ещё раз из MoneyCRM.')
+    if (!connectionId || !token) {
+      res.status(410).json({ error: 'Тестовое подключение устарело. Вернитесь в MoneyCRM и запустите подключение заново.' })
+      return
+    }
 
     const { data: connection, error: connectionError } = await client
       .from('bank_connections')
@@ -13,10 +16,20 @@ export default async function handler(req, res) {
       .eq('id', connectionId)
       .eq('provider', 'demo')
       .eq('created_by', user.id)
-      .single()
+      .maybeSingle()
     if (connectionError) throw connectionError
-    if (connection.provider_connection_id !== token) throw new Error('Неверный код тестового подключения')
-    if (connection.status === 'revoked') throw new Error('Тестовое подключение уже отключено')
+    if (!connection) {
+      res.status(410).json({ error: 'Эта страница подключения уже устарела. Вернитесь в MoneyCRM → Настройки → Банки и счета → Подключить → Тестовый банк.' })
+      return
+    }
+    if (connection.provider_connection_id !== token) {
+      res.status(410).json({ error: 'Код тестового подключения устарел. Запустите подключение заново из MoneyCRM.' })
+      return
+    }
+    if (connection.status === 'revoked') {
+      res.status(410).json({ error: 'Это тестовое подключение уже закрыто. Запустите новое из MoneyCRM.' })
+      return
+    }
 
     const { data: workspace, error: workspaceError } = await client.from('workspaces').select('id,kind').eq('id', connection.workspace_id).single()
     if (workspaceError) throw workspaceError
