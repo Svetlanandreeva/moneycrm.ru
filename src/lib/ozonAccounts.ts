@@ -46,10 +46,9 @@ export async function syncOzonAccountMetadata(input: {
 
   let { data: connection, error: connectionError } = await auth
     .from('bank_connections')
-    .select('id,sync_from_at')
+    .select('id,status,sync_from_at')
     .eq('workspace_id', input.workspaceId)
     .eq('provider', 'ozon_statement')
-    .neq('status', 'revoked')
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -67,9 +66,17 @@ export async function syncOzonAccountMetadata(input: {
       last_synced_at: now,
       sync_from_at: input.fromDate || null,
       created_by: userData.user.id,
-    }).select('id,sync_from_at').single()
+    }).select('id,status,sync_from_at').single()
     if (created.error) throw created.error
     connection = created.data
+  } else if (connection.status === 'revoked') {
+    const restored = await auth.from('bank_connections').update({
+      status: 'active',
+      connected_at: now,
+      error_message: null,
+    }).eq('id', connection.id).select('id,status,sync_from_at').single()
+    if (restored.error) throw restored.error
+    connection = restored.data
   }
 
   const seen = new Set<string>()
