@@ -44,14 +44,43 @@ function amountMinor(value) {
 function labeledAmount(text, labels) {
   for (const label of labels) {
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const expression = new RegExp(`${escaped}[^\\d]{0,45}(\\d[\\d\\s\\u00a0]*(?:[.,]\\d{1,2})?)\\s*(?:₽|руб\\.?|р\\.?)`, 'i')
+    const expression = new RegExp(`${escaped}[^\\d]{0,45}(-?\\d[\\d\\s\\u00a0]*(?:[.,]\\d{1,2})?)\\s*(?:₽|руб\\.?|р\\.?)`, 'i')
     const match = text.match(expression)
     if (match) {
       const parsed = amountMinor(match[1])
-      if (parsed !== null) return parsed
+      if (parsed !== null) return match[1].trim().startsWith('-') ? -parsed : parsed
     }
   }
   return null
+}
+
+function firstOwnBalance(text) {
+  const labeled = labeledAmount(text, ['текущий баланс', 'баланс', 'собственные средства', 'остаток', 'на счёте', 'на карте'])
+  if (labeled !== null) return labeled
+
+  const lines = String(text || '').split(/\r?\n/).map(normalize).filter(Boolean)
+  const amountRe = /(-?\d[\d\s\u00a0]*(?:[.,]\d{1,2})?)\s*(?:₽|руб\.?|р\.?)/i
+  for (const line of lines) {
+    if (/лимит|задолж|доступн|минимальн|обязательн|плат[её]ж/i.test(line)) continue
+    const match = line.match(amountRe)
+    if (!match) continue
+    const parsed = amountMinor(match[1])
+    if (parsed !== null) return match[1].trim().startsWith('-') ? -parsed : parsed
+  }
+  return null
+}
+
+function accountNameFromText(text, isCredit) {
+  if (isCredit) return 'Ozon Кредитная карта'
+  const lines = String(text || '').split(/\r?\n/).map(normalize).filter(Boolean)
+  const preferred = lines.find(line =>
+    line.length <= 80 &&
+    !/[₽]/.test(line) &&
+    /(ozon\s*карта|накопительн\w*\s+сч[её]т|сч[её]т|карта)/i.test(line) &&
+    !/операц|пополн|перев|оплат/i.test(line)
+  )
+  if (preferred) return preferred.replace(/(?:[•*]{2,}|\*{2,})\s*\d{4}.*/i, '').trim() || 'Ozon Карта'
+  return 'Ozon Карта'
 }
 
 function extractAccountMeta(text) {
@@ -80,17 +109,60 @@ function extractAccountMeta(text) {
     creditPaymentDueAt = candidate.toISOString().slice(0, 10)
   }
 
+  const currentBalanceMinor = isCredit ? null : firstOwnBalance(String(text || ''))
+  const accountName = accountNameFromText(String(text || ''), isCredit)
+
   return {
     accountType: isCredit ? 'credit' : 'bank',
-    accountName: isCredit ? 'Ozon Кредитная карта' : 'Ozon Карта',
+    accountName,
     accountMask: mask,
     externalAccountId: mask ? `ozon-${mask}` : isCredit ? 'ozon-credit-main' : 'ozon-main',
-    creditLimitMinor: isCredit ? creditLimitMinor : null,
-    creditDebtMinor: isCredit ? creditDebtMinor : null,
-    creditAvailableMinor: isCredit ? creditAvailableMinor : null,
-    creditMinPaymentMinor: isCredit ? creditMinPaymentMinor : null,
+    currentBalanceMinor,
+    creditLimitMinor: isCredit ? Math.abs(creditLimitMinor ?? 0) || null : null,
+    creditDebtMinor: isCredit ? Math.abs(creditDebtMinor ?? 0) || 0 : null,
+    creditAvailableMinor: isCredit ? Math.abs(creditAvailableMinor ?? 0) || null : null,
+    creditMinPaymentMinor: isCredit ? Math.abs(creditMinPaymentMinor ?? 0) || null : null,
     creditPaymentDueAt: isCredit ? creditPaymentDueAt : null,
   }
+}
+
+function fallbackExternalId(meta, index) {
+  if (meta.accountMask) return `ozon-${meta.accountMask}`
+  const slug = normalize(meta.accountName || (meta.accountType === 'credit' ? 'credit' : 'account'))
+    .toLowerCase()
+    .replace(/[^a-zа-я0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'account'
+  return `ozon-${slug}-${index + 1}`
+}
+
+function discoverAccounts() {
+  const nodes = [...document.querySelectorAll('a,button,[role="button"],[tabindex]')]
+    .filter(isVisible)
+  const candidates = []
+
+  for (const element of nodes) {
+    const raw = String(element.innerText || element.textContent || '')
+    const text = normalize(raw)
+    if (text.length < 4 || text.length > 420) continue
+    if (!/(₽|руб\.?|р\.?)/i.test(text)) continue
+    if (!/(карт|сч[её]т|ozon|накоп|[•*]{2,}\s*\d{4})/i.test(text)) continue
+    if (/все операции|история операций|пополнить|перевести|оплатить|кэшбэк/i.test(text) && text.length < 90) continue
+
+    const meta = extractAccountMeta(raw)
+    const index = candidates.length
+    if (!meta.accountMask) meta.externalAccountId = fallbackExternalId(meta, index)
+    candidates.push({ meta, richness: text.length })
+  }
+
+  const byKey = new Map()
+  for (const candidate of candidates) {
+    const key = candidate.meta.externalAccountId || `${candidate.meta.accountName}|${candidate.meta.accountType}`
+    const previous = byKey.get(key)
+    if (!previous || candidate.richness < previous.richness) byKey.set(key, candidate)
+  }
+
+  return [...byKey.values()].map(item => item.meta).slice(0, 12)
 }
 
 function extractFinancialLines(text) {
@@ -127,6 +199,7 @@ function scrollStepsFor(fromDate) {
 async function collectPageText(fromDate) {
   const snapshots = []
   const initialText = document.body?.innerText || ''
+  const discoveredAccounts = discoverAccounts()
   const control = findOperationsControl()
   if (control) {
     control.click()
@@ -151,7 +224,22 @@ async function collectPageText(fromDate) {
   snapshots.push(document.body?.innerText || '')
   window.scrollTo({ top: originalY, behavior: 'auto' })
 
-  const allPageText = [initialText, ...snapshots].join('\n')
+  const detailText = snapshots.join('\n')
+  const detailMeta = extractAccountMeta(detailText || initialText)
+  const match = discoveredAccounts.find(account =>
+    (detailMeta.accountMask && account.accountMask === detailMeta.accountMask) ||
+    account.externalAccountId === detailMeta.externalAccountId
+  )
+  if (match) {
+    detailMeta.currentBalanceMinor = match.currentBalanceMinor
+    detailMeta.accountName = match.accountName || detailMeta.accountName
+    detailMeta.externalAccountId = match.externalAccountId || detailMeta.externalAccountId
+  }
+
+  if (!discoveredAccounts.some(account => account.externalAccountId === detailMeta.externalAccountId)) {
+    discoveredAccounts.push(detailMeta)
+  }
+
   const allLines = snapshots.flatMap(extractFinancialLines)
   const unique = []
   const seen = new Set()
@@ -161,9 +249,13 @@ async function collectPageText(fromDate) {
     seen.add(key)
     unique.push(key)
   }
+
   return {
     text: unique.join('\n'),
-    accountMeta: extractAccountMeta(allPageText),
+    accountMeta: {
+      ...detailMeta,
+      accounts: discoveredAccounts,
+    },
   }
 }
 
@@ -181,9 +273,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     const collected = await collectPageText(message.fromDate || null)
     if (!collected.text || collected.text.length < 20) {
+      const accounts = collected.accountMeta?.accounts || []
+      if (accounts.length) {
+        sendResponse({
+          status: 'ok',
+          text: '',
+          accountMeta: collected.accountMeta,
+          fromDate: message.fromDate || null,
+          pageUrl: location.href,
+          pageTitle: document.title,
+        })
+        return
+      }
       sendResponse({
         status: 'needs_navigation',
-        message: 'Не нашла историю операций автоматически. В открывшемся Ozon Банке перейдите в историю операций и затем нажмите синхронизацию в MoneyCRM ещё раз.',
+        message: 'Не нашла счета или историю операций автоматически. Откройте главную страницу Ozon Банка и повторите синхронизацию.',
       })
       return
     }
