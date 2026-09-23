@@ -3,6 +3,7 @@ import type { OzonAccountMeta } from './ozonStatement'
 
 export type OzonDiscoveredAccountMeta = OzonAccountMeta & {
   currentBalanceMinor?: number | null
+  apiVerified?: boolean
 }
 
 function db() {
@@ -14,17 +15,12 @@ function normalizeMask(value?: string | null) {
   return value?.replace(/\D/g, '').slice(-4) || null
 }
 
-function stableExternalId(meta: OzonDiscoveredAccountMeta, index: number) {
+function stableExternalId(meta: OzonDiscoveredAccountMeta) {
   const explicit = meta.externalAccountId?.trim()
   if (explicit) return explicit
   const mask = normalizeMask(meta.accountMask)
   if (mask) return `ozon-${mask}`
-  const name = (meta.accountName || (meta.accountType === 'credit' ? 'credit' : 'account'))
-    .toLowerCase()
-    .replace(/[^a-zа-я0-9]+/gi, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48) || 'account'
-  return `ozon-${name}-${index + 1}`
+  return null
 }
 
 export async function syncOzonAccountMetadata(input: {
@@ -33,7 +29,11 @@ export async function syncOzonAccountMetadata(input: {
   fromDate?: string | null
 }) {
   const auth = db()
-  const cleanAccounts = input.accounts.filter(Boolean)
+  const cleanAccounts = input.accounts.filter(meta => {
+    if (!meta || meta.apiVerified !== true) return false
+    const externalId = stableExternalId(meta)
+    return Boolean(externalId && (normalizeMask(meta.accountMask) || externalId.startsWith('ozon-api-')))
+  })
   if (!cleanAccounts.length) return { synced: 0 }
 
   const [{ data: userData, error: userError }, { data: workspace, error: workspaceError }] = await Promise.all([
@@ -82,10 +82,9 @@ export async function syncOzonAccountMetadata(input: {
   const seen = new Set<string>()
   let synced = 0
 
-  for (let index = 0; index < cleanAccounts.length; index += 1) {
-    const meta = cleanAccounts[index]
-    const externalAccountId = stableExternalId(meta, index)
-    if (seen.has(externalAccountId)) continue
+  for (const meta of cleanAccounts) {
+    const externalAccountId = stableExternalId(meta)
+    if (!externalAccountId || seen.has(externalAccountId)) continue
     seen.add(externalAccountId)
 
     const isCredit = meta.accountType === 'credit'
@@ -100,18 +99,30 @@ export async function syncOzonAccountMetadata(input: {
 
     let { data: link, error: linkError } = await auth
       .from('bank_account_links')
-      .select('id,account_id')
+      .select('id,account_id,external_account_id')
       .eq('connection_id', connection.id)
       .eq('external_account_id', externalAccountId)
       .maybeSingle()
     if (linkError) throw linkError
+
+    if (!link && accountMask) {
+      const byMask = await auth
+        .from('bank_account_links')
+        .select('id,account_id,external_account_id')
+        .eq('connection_id', connection.id)
+        .eq('account_mask', accountMask)
+        .limit(1)
+        .maybeSingle()
+      if (byMask.error) throw byMask.error
+      link = byMask.data
+    }
 
     const accountPatch = {
       name: accountName,
       account_type: isCredit ? 'credit' : workspace.kind === 'business' ? 'business' : 'bank',
       institution: 'Ozon Банк',
       bank_synced_balance_minor: isCredit ? null : currentBalance,
-      bank_synced_balance_at: currentBalance !== null ? now : null,
+      bank_synced_balance_at: !isCredit && currentBalance !== null ? now : null,
       credit_limit_minor: isCredit ? limit : null,
       credit_debt_minor: isCredit ? debt : null,
       credit_available_minor: isCredit ? available : null,
@@ -147,13 +158,14 @@ export async function syncOzonAccountMetadata(input: {
         account_mask: accountMask,
         currency: 'RUB',
         last_synced_at: now,
-      }).select('id,account_id').single()
+      }).select('id,account_id,external_account_id').single()
       if (linked.error) throw linked.error
       link = linked.data
     } else {
       const { error: accountError } = await auth.from('accounts').update(accountPatch).eq('id', link.account_id)
       if (accountError) throw accountError
       const { error: linkedError } = await auth.from('bank_account_links').update({
+        external_account_id: externalAccountId,
         external_name: accountName,
         account_mask: accountMask,
         last_synced_at: now,
