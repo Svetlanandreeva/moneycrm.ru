@@ -60,7 +60,8 @@ function extractAccountMeta(text) {
   const explicitDebtMinor = labeledAmount(body, ['текущая задолженность', 'задолженность по карте', 'задолженность', 'использовано'])
   const creditAvailableMinor = labeledAmount(body, ['доступный лимит', 'доступно по карте', 'доступно'])
   const creditMinPaymentMinor = labeledAmount(body, ['минимальный платёж', 'обязательный платёж', 'платёж по кредиту'])
-  const isCredit = creditLimitMinor !== null || explicitDebtMinor !== null
+  const hasCreditCardLabel = /кредитн\w*\s+карт/i.test(body)
+  const isCredit = hasCreditCardLabel || (creditLimitMinor !== null && (explicitDebtMinor !== null || creditAvailableMinor !== null))
   const creditDebtMinor = explicitDebtMinor ?? (
     isCredit && creditLimitMinor !== null && creditAvailableMinor !== null
       ? Math.max(creditLimitMinor - creditAvailableMinor, 0)
@@ -125,6 +126,7 @@ function scrollStepsFor(fromDate) {
 
 async function collectPageText(fromDate) {
   const snapshots = []
+  const initialText = document.body?.innerText || ''
   const control = findOperationsControl()
   if (control) {
     control.click()
@@ -149,7 +151,7 @@ async function collectPageText(fromDate) {
   snapshots.push(document.body?.innerText || '')
   window.scrollTo({ top: originalY, behavior: 'auto' })
 
-  const allPageText = snapshots.join('\n')
+  const allPageText = [initialText, ...snapshots].join('\n')
   const allLines = snapshots.flatMap(extractFinancialLines)
   const unique = []
   const seen = new Set()
