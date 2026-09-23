@@ -15,8 +15,7 @@ export async function listBankConnections(): Promise<{ workspaces: Workspace[]; 
   const workspaces = await listWorkspaces(); if (!workspaces.length) return { workspaces, connections: [], linkedAccounts: [] }
   const workspaceIds = workspaces.map(w => w.id)
   const { data: connections, error } = await client().from('bank_connections').select('id,workspace_id,provider,provider_bank_code,institution_name,status,last_synced_at,connected_at,error_message').in('workspace_id', workspaceIds).neq('status', 'revoked').order('connected_at', { ascending: false, nullsFirst: false }); if (error) throw error
-  const connectionIds = (connections ?? []).map(c => c.id)
-  let links: any[] = []
+  const connectionIds = (connections ?? []).map(c => c.id); let links: any[] = []
   if (connectionIds.length) { const { data, error: e } = await client().from('bank_account_links').select('id,connection_id,account_id,external_name,account_mask,currency,last_synced_at').in('connection_id', connectionIds); if (e) throw e; links = data ?? [] }
   const accountIds = links.map(l => l.account_id); let accountRows: any[] = []
   if (accountIds.length) { const { data, error: e } = await client().from('accounts').select('id,workspace_id,name,institution,account_type').in('id', accountIds); if (e) throw e; accountRows = data ?? [] }
@@ -32,6 +31,26 @@ export async function startBankConnection(workspaceId: string, bankCode: string)
   const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || 'Не удалось начать подключение банка'); if (!payload.authorizeUrl) throw new Error('Банк не вернул ссылку авторизации'); window.location.assign(payload.authorizeUrl)
 }
 
-export async function syncBankConnection(connectionId: string) { const token = await accessToken(); const response = await fetch('/api/banks/sync', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ connectionId }) }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || 'Не удалось синхронизировать банк'); return payload as { imported: number; pendingStatements: number } }
+async function syncDemo(connectionId: string) {
+  const db = client()
+  const { data: connection, error: ce } = await db.from('bank_connections').select('id,provider').eq('id', connectionId).single(); if (ce) throw ce
+  if (connection.provider !== 'demo') return null
+  const { data: link, error: le } = await db.from('bank_account_links').select('id,account_id,currency').eq('connection_id', connectionId).limit(1).maybeSingle(); if (le) throw le
+  if (!link) throw new Error('Сначала завершите подключение тестового банка')
+  const { data: account, error: ae } = await db.from('accounts').select('workspace_id').eq('id', link.account_id).single(); if (ae) throw ae
+  const { data: workspace, error: we } = await db.from('workspaces').select('kind').eq('id', account.workspace_id).single(); if (we) throw we
+  const { data: session } = await db.auth.getUser(); const userId = session.user?.id; if (!userId) throw new Error('Not authenticated')
+  const now = new Date().toISOString(); const externalId = `demo-sync-${connectionId}-${Date.now()}`
+  const { data: tx, error: te } = await db.from('transactions').insert({ workspace_id: account.workspace_id, account_id: link.account_id, amount_minor: -159000, currency: link.currency || 'RUB', transaction_type: 'expense', context: workspace.kind, counterparty: 'Тестовая покупка', note: 'Новая операция после синхронизации', occurred_at: now, source: 'bank', external_id: externalId, status: 'posted', created_by: userId }).select('id').single(); if (te) throw te
+  const { error: ie } = await db.from('bank_transaction_imports').insert({ bank_account_link_id: link.id, external_transaction_id: externalId, amount_minor: -159000, currency: link.currency || 'RUB', direction: 'debit', posted_at: now, description: 'Новая операция после синхронизации', merchant_name: 'Тестовая покупка', import_status: 'imported', matched_transaction_id: tx.id, raw_data: { demo: true } }); if (ie) throw ie
+  await db.from('bank_account_links').update({ last_synced_at: now }).eq('id', link.id)
+  await db.from('bank_connections').update({ last_synced_at: now, status: 'active', error_message: null }).eq('id', connectionId)
+  return { imported: 1, pendingStatements: 0 }
+}
+
+export async function syncBankConnection(connectionId: string) {
+  const demo = await syncDemo(connectionId); if (demo) return demo
+  const token = await accessToken(); const response = await fetch('/api/banks/sync', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ connectionId }) }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || 'Не удалось синхронизировать банк'); return payload as { imported: number; pendingStatements: number }
+}
 export async function routeBankAccount(linkId: string, targetWorkspaceId: string) { const { error } = await client().rpc('route_bank_account_context', { p_bank_account_link_id: linkId, p_target_workspace_id: targetWorkspaceId }); if (error) throw error }
 export async function disconnectBankConnection(connectionId: string) { const { error } = await client().from('bank_connections').update({ status: 'revoked', error_message: null }).eq('id', connectionId); if (error) throw error }
