@@ -1,16 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
-import { CheckCircle2, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react'
+import { CalendarDays, CheckCircle2, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react'
 import { importOzonBridgeText } from '../lib/ozonBridgeImport'
-import { listBankConnections } from '../lib/bankConnections'
+import { listBankConnections, type BankConnection } from '../lib/bankConnections'
 
 type BridgeState = 'checking' | 'ready' | 'missing'
 type ToastState = { kind: 'info' | 'success' | 'error'; text: string } | null
+
+function dateDaysAgo(days: number) {
+  const value = new Date()
+  value.setDate(value.getDate() - days)
+  return value.toISOString().slice(0, 10)
+}
+
+const TODAY = new Date().toISOString().slice(0, 10)
+const DEFAULT_FROM_DATE = dateDaysAgo(90)
 
 export function OzonQuickSync() {
   const [bridgeState, setBridgeState] = useState<BridgeState>('checking')
   const [syncing, setSyncing] = useState(false)
   const [toast, setToast] = useState<ToastState>(null)
+  const [setupOpen, setSetupOpen] = useState(false)
+  const [fromDate, setFromDate] = useState(DEFAULT_FROM_DATE)
   const activeRequest = useRef<string | null>(null)
+  const pendingFromDate = useRef<string | null>(null)
 
   useEffect(() => {
     let pingTimer: number | null = null
@@ -42,12 +54,12 @@ export function OzonQuickSync() {
     }
   }, [])
 
-  async function resolveWorkspaceId() {
+  async function resolveTarget(): Promise<{ workspaceId: string; connection: BankConnection | null }> {
     const state = await listBankConnections()
-    const existing = state.connections.find(connection => connection.provider === 'ozon_statement' && connection.status !== 'revoked')
-    if (existing) return existing.workspace_id
+    const existing = state.connections.find(connection => connection.provider === 'ozon_statement' && connection.status !== 'revoked') ?? null
+    if (existing) return { workspaceId: existing.workspace_id, connection: existing }
     const personal = state.workspaces.find(workspace => workspace.kind === 'personal')
-    return personal?.id || state.workspaces[0]?.id || ''
+    return { workspaceId: personal?.id || state.workspaces[0]?.id || '', connection: null }
   }
 
   async function finishSync(payload: any) {
@@ -66,20 +78,29 @@ export function OzonQuickSync() {
         throw new Error(payload.message || 'Ozon не вернул данные для синхронизации')
       }
 
-      const workspaceId = await resolveWorkspaceId()
-      if (!workspaceId) throw new Error('Не найден раздел для банковского счёта')
+      const target = await resolveTarget()
+      if (!target.workspaceId) throw new Error('Не найден раздел для банковского счёта')
+
+      const syncFrom = pendingFromDate.current || payload.fromDate || target.connection?.sync_from_at || null
+      const accountMeta = payload.accountMeta && typeof payload.accountMeta === 'object' ? payload.accountMeta : null
+      const isCredit = accountMeta?.accountType === 'credit'
 
       const result = await importOzonBridgeText({
-        workspaceId,
+        workspaceId: target.workspaceId,
         text: String(payload.text),
-        accountName: 'Ozon Карта',
+        accountName: accountMeta?.accountName || (isCredit ? 'Ozon Кредитная карта' : 'Ozon Карта'),
+        fromDate: syncFrom,
+        accountMeta,
       })
 
+      const creditNote = result.accountType === 'credit'
+        ? ' Кредитная карта учтена как долг банку, её лимит не входит в ваш капитал.'
+        : ''
       setToast({
         kind: 'success',
         text: result.imported
-          ? `Ozon обновлён: +${result.imported} операций${result.duplicates ? `, ${result.duplicates} дублей пропущено` : ''}.`
-          : `Ozon уже актуален. Дублей пропущено: ${result.duplicates}.`,
+          ? `Ozon обновлён: +${result.imported} операций${result.duplicates ? `, ${result.duplicates} дублей пропущено` : ''}.${creditNote}`
+          : `Ozon уже актуален. Дублей пропущено: ${result.duplicates}.${creditNote}`,
       })
       window.dispatchEvent(new CustomEvent('moneycrm:bank-sync-complete', { detail: { provider: 'ozon' } }))
     } catch (error) {
@@ -90,7 +111,7 @@ export function OzonQuickSync() {
     }
   }
 
-  async function startSync() {
+  async function launchSync(chosenFromDate?: string | null) {
     if (syncing) return
     if (bridgeState !== 'ready') {
       setToast({
@@ -100,18 +121,31 @@ export function OzonQuickSync() {
       return
     }
 
+    const target = await resolveTarget()
+    const savedStart = target.connection?.sync_from_at || null
+    const syncFrom = chosenFromDate || pendingFromDate.current || savedStart
+
+    if (!syncFrom) {
+      setFromDate(DEFAULT_FROM_DATE)
+      setSetupOpen(true)
+      setToast(null)
+      return
+    }
+
+    pendingFromDate.current = syncFrom
+    setSetupOpen(false)
     const requestId = `ozon-${Date.now()}-${Math.random().toString(36).slice(2)}`
     activeRequest.current = requestId
     setSyncing(true)
-    setToast({ kind: 'info', text: 'Обновляю Ozon Банк…' })
-    window.postMessage({ type: 'MONEYCRM_OZON_SYNC', requestId }, window.location.origin)
+    setToast({ kind: 'info', text: `Обновляю Ozon Банк · история с ${new Intl.DateTimeFormat('ru-RU').format(new Date(`${syncFrom}T12:00:00`))}…` })
+    window.postMessage({ type: 'MONEYCRM_OZON_SYNC', requestId, fromDate: syncFrom }, window.location.origin)
 
     window.setTimeout(() => {
       if (activeRequest.current !== requestId) return
       activeRequest.current = null
       setSyncing(false)
       setToast({ kind: 'error', text: 'Коннектор Ozon не ответил. Обновите страницу MoneyCRM и попробуйте ещё раз.' })
-    }, 30000)
+    }, 70000)
   }
 
   useEffect(() => {
@@ -125,37 +159,70 @@ export function OzonQuickSync() {
       event.preventDefault()
       event.stopPropagation()
       event.stopImmediatePropagation()
-      void startSync()
+      void launchSync()
     }
 
     document.addEventListener('click', interceptOzonRefresh, true)
     return () => document.removeEventListener('click', interceptOzonRefresh, true)
   }, [bridgeState, syncing])
 
-  if (!toast && bridgeState !== 'ready') return null
+  if (!toast && bridgeState !== 'ready' && !setupOpen) return null
 
   return (
-    <div style={toastWrap}>
-      {bridgeState === 'ready' && !toast && (
-        <button type="button" onClick={() => void startSync()} disabled={syncing} style={quickButton} title="Синхронизировать Ozon Банк">
-          {syncing ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
-          Ozon
-        </button>
-      )}
-
-      {toast && (
-        <div style={{ ...toastBox, borderColor: toast.kind === 'error' ? '#f8717140' : toast.kind === 'success' ? '#34d39940' : '#e4f03035' }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-            {toast.kind === 'success' ? <CheckCircle2 size={15} color="#34d399" /> : toast.kind === 'error' ? <TriangleAlert size={15} color="#f87171" /> : <RefreshCw size={15} color="#e4f030" />}
-            <span style={{ flex: 1 }}>{toast.text}</span>
-            <button type="button" onClick={() => setToast(null)} style={closeButton}>×</button>
+    <>
+      {setupOpen && (
+        <div style={setupOverlay}>
+          <div style={setupCard}>
+            <div style={setupIcon}><CalendarDays size={19} /></div>
+            <p style={setupTitle}>С какой даты загрузить Ozon?</p>
+            <p style={setupText}>
+              Это спрашивается только при первом подключении. Дальше MoneyCRM будет добавлять только новые операции одной кнопкой.
+            </p>
+            <input
+              type="date"
+              value={fromDate}
+              max={TODAY}
+              onChange={event => setFromDate(event.target.value)}
+              style={dateInput}
+            />
+            <div style={quickDates}>
+              <button type="button" onClick={() => setFromDate(dateDaysAgo(30))} style={dateChip}>30 дней</button>
+              <button type="button" onClick={() => setFromDate(dateDaysAgo(90))} style={dateChip}>3 месяца</button>
+              <button type="button" onClick={() => setFromDate(dateDaysAgo(365))} style={dateChip}>1 год</button>
+            </div>
+            <div style={creditHint}>
+              Кредитку MoneyCRM определит отдельно: кредитный лимит — деньги банка, а использованная сумма — ваш долг. Лимит не попадёт в «Общий капитал».
+            </div>
+            <button type="button" disabled={!fromDate} onClick={() => void launchSync(fromDate)} style={setupPrimary}>
+              Подключить и загрузить
+            </button>
+            <button type="button" onClick={() => setSetupOpen(false)} style={setupCancel}>Отмена</button>
           </div>
-          {bridgeState === 'ready' && !syncing && toast.kind !== 'success' && (
-            <button type="button" onClick={() => void startSync()} style={retryButton}>Повторить синхронизацию</button>
-          )}
         </div>
       )}
-    </div>
+
+      <div style={toastWrap}>
+        {bridgeState === 'ready' && !toast && !setupOpen && (
+          <button type="button" onClick={() => void launchSync()} disabled={syncing} style={quickButton} title="Синхронизировать Ozon Банк">
+            {syncing ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
+            Ozon
+          </button>
+        )}
+
+        {toast && !setupOpen && (
+          <div style={{ ...toastBox, borderColor: toast.kind === 'error' ? '#f8717140' : toast.kind === 'success' ? '#34d39940' : '#e4f03035' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              {toast.kind === 'success' ? <CheckCircle2 size={15} color="#34d399" /> : toast.kind === 'error' ? <TriangleAlert size={15} color="#f87171" /> : <RefreshCw size={15} color="#e4f030" />}
+              <span style={{ flex: 1 }}>{toast.text}</span>
+              <button type="button" onClick={() => setToast(null)} style={closeButton}>×</button>
+            </div>
+            {bridgeState === 'ready' && !syncing && toast.kind !== 'success' && (
+              <button type="button" onClick={() => void launchSync()} style={retryButton}>Повторить синхронизацию</button>
+            )}
+          </div>
+        )}
+      </div>
+    </>
   )
 }
 
@@ -217,5 +284,117 @@ const retryButton = {
   color: '#0c0d10',
   fontSize: 9,
   fontWeight: 850,
+  cursor: 'pointer',
+} as const
+
+const setupOverlay = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 1200,
+  display: 'grid',
+  placeItems: 'center',
+  padding: 18,
+  background: '#08090ccf',
+  backdropFilter: 'blur(10px)',
+} as const
+
+const setupCard = {
+  width: 'min(390px, calc(100vw - 36px))',
+  padding: 20,
+  borderRadius: 22,
+  background: '#14161c',
+  border: '1px solid #2b2f39',
+  boxShadow: '0 24px 80px #000c',
+} as const
+
+const setupIcon = {
+  width: 42,
+  height: 42,
+  display: 'grid',
+  placeItems: 'center',
+  borderRadius: 13,
+  color: '#e4f030',
+  background: '#e4f03010',
+  border: '1px solid #e4f03033',
+} as const
+
+const setupTitle = {
+  margin: '14px 0 5px',
+  fontSize: 19,
+  fontWeight: 850,
+  color: '#f3f4f6',
+} as const
+
+const setupText = {
+  margin: '0 0 15px',
+  color: '#747d8b',
+  fontSize: 11,
+  lineHeight: 1.5,
+} as const
+
+const dateInput = {
+  width: '100%',
+  minHeight: 46,
+  boxSizing: 'border-box',
+  padding: '0 12px',
+  borderRadius: 12,
+  border: '1px solid #303440',
+  background: '#0d0f14',
+  color: '#f3f4f6',
+  colorScheme: 'dark',
+  fontSize: 13,
+  outline: 'none',
+} as const
+
+const quickDates = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(3, 1fr)',
+  gap: 7,
+  marginTop: 8,
+} as const
+
+const dateChip = {
+  minHeight: 34,
+  borderRadius: 9,
+  border: '1px solid #2a2e38',
+  background: '#101218',
+  color: '#9ca3af',
+  fontSize: 9,
+  fontWeight: 750,
+  cursor: 'pointer',
+} as const
+
+const creditHint = {
+  marginTop: 13,
+  padding: '10px 11px',
+  borderRadius: 11,
+  background: '#f871710b',
+  border: '1px solid #f8717124',
+  color: '#b9bec7',
+  fontSize: 9,
+  lineHeight: 1.5,
+} as const
+
+const setupPrimary = {
+  width: '100%',
+  minHeight: 44,
+  marginTop: 14,
+  border: 0,
+  borderRadius: 12,
+  background: '#e4f030',
+  color: '#0b0c0e',
+  fontSize: 11,
+  fontWeight: 900,
+  cursor: 'pointer',
+} as const
+
+const setupCancel = {
+  width: '100%',
+  minHeight: 36,
+  marginTop: 6,
+  border: 0,
+  background: 'transparent',
+  color: '#6b7280',
+  fontSize: 10,
   cursor: 'pointer',
 } as const
