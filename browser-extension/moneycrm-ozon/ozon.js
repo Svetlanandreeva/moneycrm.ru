@@ -31,6 +31,67 @@ function findOperationsControl() {
   return null
 }
 
+function amountMinor(value) {
+  const clean = String(value || '')
+    .replace(/[₽рRUBуб.]/gi, '')
+    .replace(/[\s\u00a0]/g, '')
+    .replace(',', '.')
+    .replace(/[^\d.-]/g, '')
+  const number = Number(clean)
+  return Number.isFinite(number) ? Math.round(Math.abs(number) * 100) : null
+}
+
+function labeledAmount(text, labels) {
+  for (const label of labels) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const expression = new RegExp(`${escaped}[^\\d]{0,45}(\\d[\\d\\s\\u00a0]*(?:[.,]\\d{1,2})?)\\s*(?:₽|руб\\.?|р\\.?)`, 'i')
+    const match = text.match(expression)
+    if (match) {
+      const parsed = amountMinor(match[1])
+      if (parsed !== null) return parsed
+    }
+  }
+  return null
+}
+
+function extractAccountMeta(text) {
+  const body = normalize(text)
+  const creditLimitMinor = labeledAmount(body, ['кредитный лимит', 'лимит по карте', 'общий лимит'])
+  const explicitDebtMinor = labeledAmount(body, ['текущая задолженность', 'задолженность по карте', 'задолженность', 'использовано'])
+  const creditAvailableMinor = labeledAmount(body, ['доступный лимит', 'доступно по карте', 'доступно'])
+  const creditMinPaymentMinor = labeledAmount(body, ['минимальный платёж', 'обязательный платёж', 'платёж по кредиту'])
+  const isCredit = creditLimitMinor !== null || explicitDebtMinor !== null
+  const creditDebtMinor = explicitDebtMinor ?? (
+    isCredit && creditLimitMinor !== null && creditAvailableMinor !== null
+      ? Math.max(creditLimitMinor - creditAvailableMinor, 0)
+      : null
+  )
+
+  const mask = body.match(/(?:[•*]{2,}|\*{2,})\s*(\d{4})\b/)?.[1] ?? null
+  const dueDate = body.match(/(?:оплатить до|внести до|плат[её]ж до)\s*(\d{1,2})[.\/-](\d{1,2})(?:[.\/-](\d{2,4}))?/i)
+  let creditPaymentDueAt = null
+  if (dueDate) {
+    const now = new Date()
+    let year = dueDate[3] ? Number(dueDate[3]) : now.getFullYear()
+    if (year < 100) year += 2000
+    const candidate = new Date(Date.UTC(year, Number(dueDate[2]) - 1, Number(dueDate[1]), 12, 0, 0))
+    if (!dueDate[3] && candidate.getTime() < now.getTime() - 40 * 86400000) candidate.setUTCFullYear(year + 1)
+    creditPaymentDueAt = candidate.toISOString().slice(0, 10)
+  }
+
+  return {
+    accountType: isCredit ? 'credit' : 'bank',
+    accountName: isCredit ? 'Ozon Кредитная карта' : 'Ozon Карта',
+    accountMask: mask,
+    externalAccountId: mask ? `ozon-${mask}` : isCredit ? 'ozon-credit-main' : 'ozon-main',
+    creditLimitMinor: isCredit ? creditLimitMinor : null,
+    creditDebtMinor: isCredit ? creditDebtMinor : null,
+    creditAvailableMinor: isCredit ? creditAvailableMinor : null,
+    creditMinPaymentMinor: isCredit ? creditMinPaymentMinor : null,
+    creditPaymentDueAt: isCredit ? creditPaymentDueAt : null,
+  }
+}
+
 function extractFinancialLines(text) {
   const lines = String(text || '')
     .split(/\r?\n/)
@@ -54,7 +115,15 @@ function extractFinancialLines(text) {
     .map(index => lines[index])
 }
 
-async function collectPageText() {
+function scrollStepsFor(fromDate) {
+  if (!fromDate) return 18
+  const start = Date.parse(`${fromDate}T00:00:00`)
+  if (!Number.isFinite(start)) return 18
+  const days = Math.max(0, Math.ceil((Date.now() - start) / 86400000))
+  return Math.min(90, Math.max(18, 12 + Math.ceil(days / 10)))
+}
+
+async function collectPageText(fromDate) {
   const snapshots = []
   const control = findOperationsControl()
   if (control) {
@@ -63,19 +132,24 @@ async function collectPageText() {
   }
 
   const originalY = window.scrollY
+  const maxSteps = scrollStepsFor(fromDate)
   let previousHeight = 0
-  for (let step = 0; step < 12; step += 1) {
+  let stagnantRounds = 0
+  for (let step = 0; step < maxSteps; step += 1) {
     snapshots.push(document.body?.innerText || '')
     const height = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0)
     window.scrollTo({ top: height, behavior: 'auto' })
-    await sleep(400)
+    await sleep(450)
     const nextHeight = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0)
-    if (step > 2 && nextHeight === previousHeight) break
+    if (step > 2 && nextHeight <= previousHeight + 2) stagnantRounds += 1
+    else stagnantRounds = 0
+    if (stagnantRounds >= 3) break
     previousHeight = nextHeight
   }
   snapshots.push(document.body?.innerText || '')
   window.scrollTo({ top: originalY, behavior: 'auto' })
 
+  const allPageText = snapshots.join('\n')
   const allLines = snapshots.flatMap(extractFinancialLines)
   const unique = []
   const seen = new Set()
@@ -85,7 +159,10 @@ async function collectPageText() {
     seen.add(key)
     unique.push(key)
   }
-  return unique.join('\n')
+  return {
+    text: unique.join('\n'),
+    accountMeta: extractAccountMeta(allPageText),
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -100,8 +177,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return
     }
 
-    const text = await collectPageText()
-    if (!text || text.length < 20) {
+    const collected = await collectPageText(message.fromDate || null)
+    if (!collected.text || collected.text.length < 20) {
       sendResponse({
         status: 'needs_navigation',
         message: 'Не нашла историю операций автоматически. В открывшемся Ozon Банке перейдите в историю операций и затем нажмите синхронизацию в MoneyCRM ещё раз.',
@@ -111,7 +188,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     sendResponse({
       status: 'ok',
-      text,
+      text: collected.text,
+      accountMeta: collected.accountMeta,
+      fromDate: message.fromDate || null,
       pageUrl: location.href,
       pageTitle: document.title,
     })
