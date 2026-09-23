@@ -17,33 +17,30 @@ async function waitForTabReady(tabId, timeoutMs = 15000) {
   return false
 }
 
-function receivingEndMissing(error) {
-  const message = error instanceof Error ? error.message : String(error || '')
-  return /Receiving end does not exist|Could not establish connection/i.test(message)
+function isMissingReceiver(error) {
+  return /receiving end does not exist|could not establish connection/i.test(String(error?.message || error || ''))
 }
 
-async function sendToOzon(tabId, message) {
-  let lastError = null
-  let reloaded = false
+async function reloadForBridge(tabId) {
+  await chrome.tabs.reload(tabId)
+  await waitForTabReady(tabId)
+  await new Promise(resolve => setTimeout(resolve, 2200))
+}
 
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+async function sendToOzon(tabId, message, allowReload = true) {
+  let lastError = null
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     try {
       return await chrome.tabs.sendMessage(tabId, message)
     } catch (error) {
       lastError = error
-      if (!reloaded && receivingEndMissing(error)) {
-        reloaded = true
-        await chrome.tabs.reload(tabId)
-        await waitForTabReady(tabId, 15000)
-        await new Promise(resolve => setTimeout(resolve, 900))
+      if (allowReload && isMissingReceiver(error)) {
+        await reloadForBridge(tabId)
+        allowReload = false
         continue
       }
-      await new Promise(resolve => setTimeout(resolve, 500))
+      await new Promise(resolve => setTimeout(resolve, 450))
     }
-  }
-
-  if (receivingEndMissing(lastError)) {
-    throw new Error('Вкладка Ozon была открыта до обновления Bridge. Я попыталась перезагрузить её автоматически. Если ошибка повторится, обновите вкладку Ozon один раз и нажмите синхронизацию снова.')
   }
   throw lastError || new Error('Ozon connector is not ready')
 }
@@ -53,12 +50,20 @@ async function handleSync(options = {}) {
   if (!tab.id) throw new Error('Не удалось открыть Ozon Банк')
 
   await waitForTabReady(tab.id)
-  const result = await sendToOzon(tab.id, {
+  let result = await sendToOzon(tab.id, {
     type: 'moneycrm:ozon-collect',
     fromDate: options.fromDate || null,
   })
 
-  if (!result || result.status === 'login_required' || result.status === 'needs_navigation') {
+  if (result?.status === 'needs_api_refresh') {
+    await reloadForBridge(tab.id)
+    result = await sendToOzon(tab.id, {
+      type: 'moneycrm:ozon-collect',
+      fromDate: options.fromDate || null,
+    }, false)
+  }
+
+  if (!result || result.status === 'login_required' || result.status === 'needs_navigation' || result.status === 'needs_api_refresh') {
     await chrome.tabs.update(tab.id, { active: true })
   }
 
